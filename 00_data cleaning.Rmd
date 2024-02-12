@@ -1,0 +1,861 @@
+---
+title: "00_data cleaning"
+author: "Brenna Kelly"
+date: "2024-02-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# background
+...
+
+# set-up
+
+```{r}
+
+library(sf)
+library(tmap)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(tidycensus)
+
+```
+
+
+## data
+
+### aqs monitors
+This code:
+- 
+
+```{r}
+
+mons <- read.csv("/Users/brenna/Downloads/aqs_monitors-3.csv")
+
+mons <- mons |>
+  filter(Parameter.Code %in% c(44201, # o3
+                               42401, # so2
+                               42101, # co
+                               42602, # no2
+                               88101, # pm2.5
+                               81102, 86101, # pm10
+                               14129, 85129, 12128)) # lead
+
+mons$lat_lon <- paste0(mons$Latitude, mons$Longitude)
+
+mons$criteria <- case_when(mons$Parameter.Code %in% c(14129, 85129, 12128) ~ "pb",
+                           mons$Parameter.Code == 42101 ~ "co",
+                           mons$Parameter.Code %in% c(88101, 81102, 86101) ~ "pm",
+                           mons$Parameter.Code == 42602 ~ "no2",
+                           mons$Parameter.Code == 44201 ~ "o3",
+                           mons$Parameter.Code == 42401 ~ "so2")
+
+mons <- mons |>
+  filter(!is.na(criteria))
+mons$criteria <- as.factor(mons$criteria)
+
+mons$last_year <- str_sub(mons$Last.Sample.Date, start = 0, end = 4)
+mons$Last.Sample.Date <- ymd(mons$Last.Sample.Date)
+
+# if there was a measurement within the past 5 years; sites are evaluated every 5 years
+mons <- mons |>
+  filter(last_year %in% c("", "2023", "2022", "2021", "2020", "2019"))
+
+# imputing lat/long based on site number
+mons$State.Code <- str_pad(mons$State.Code, pad = "0", width = 2, side = "left")
+mons$County.Code <- str_pad(mons$County.Code, pad = "0", width = 3, side = "left")
+mons$Site.Number <- str_pad(mons$Site.Number, pad = "0", width = 4, side = "left")
+
+mons$site_code <- paste0(mons$State.Code, mons$County.Code, mons$Site.Number)
+
+missing_sites <- mons[which(is.na(mons$Latitude)), "site_code"]
+missing_sites <- mons[which(mons$site_code %in% missing_sites), ]
+
+# the sites with missing lat/lon have addresses
+  # google maps to the rescue
+missing_sites[, c("Address", "State.Name", "site_code")]
+
+# making a dataframe for merge
+missing_site_locs <- data.frame(Latitude_m = c(41.759142851119755, 28.847295692743412, 27.997397528059278, 44.301764986058686,
+                                             46.33560595983247, 43.636043773953546, 43.61948993912684, 43.579846480926776,
+                                             43.60106825076201, 43.631329594263555, 43.61519809470876, 43.25579488107274,
+                                             45.95800312479897, 37.27107085242156, 43.636043773953546, 43.636043773953546,
+                                             43.636043773953546, 43.636043773953546),
+                                Longitude_m = c(-72.6812059865072, -82.47762724105901, -82.68835723156158, -69.76804768078843,
+                                              -86.84501913332537, -83.83589061574071, -84.19734680224849, -84.24246288690706,
+                                              -84.20426022923483, -84.21565144483327, -84.23534194236433, -86.2416138858149,
+                                              -86.2464834021623, -79.94489398712126, -83.83589061574071, -83.83589061574071,
+                                              -83.83589061574071, -83.83589061574071),
+                                site_code = c("090030019", "120170001", "121032002", "230110015",
+                                              "260030901", "260170901", "261110901", "261110904",
+                                              "261110905", "261110907", "261110910", "261210905",
+                                              "261530901", "511610010", "260170902", "260170903", 
+                                              "260170904", "260170905"))
+
+
+mons <- merge(mons, missing_site_locs, by = c("site_code"), all.x = TRUE)
+
+mons$Latitude <- ifelse(is.na(mons$Latitude),
+                        mons$Latitude_m,
+                        mons$Latitude)
+mons$Longitude <- ifelse(is.na(mons$Longitude),
+                         mons$Longitude_m,
+                         mons$Longitude)
+
+# AEA will be used for visualization, but distance-preserving projections like Mercator are needed for buffer calculations
+aea <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=37.5 +lon_0=-96 +ellps=GRS80 +datum=NAD83"
+mons <- st_as_sf(mons, coords = c("Longitude", "Latitude"),
+                crs = 4326, agr = "constant")## |>
+  #st_transform(3857) # mercator
+mons <- st_transform(mons, st_crs(aea))
+
+tm_shape(mons) +
+  tm_dots(col = "criteria")
+
+table(mons$Measurement.Scale.Definition,
+      mons$Measurement.Scale)
+
+# measurement scale is missing and not attainable for 1241 (16%) of observations
+#   we'll impute with the median (neighborhood scale, 500M-4KM)
+
+```
+
+
+spatial
+
+```{r}
+
+# aea <- "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=37.5 +lon_0=-96 +ellps=GRS80 +datum=NAD83"
+# 
+# mons <- st_as_sf(mons, coords = c("Longitude", "Latitude"), 
+#                  crs = 4326, agr = "constant")
+# mons <- st_transform(mons, st_crs(aea))
+# 
+# tm_shape(mons) +
+#   tm_dots(col = "criteria")
+# 
+
+```
+
+
+### population characteristics
+
+```{r}
+
+acs_vars <- load_variables(2021, "acs5", cache = TRUE)
+
+
+ST <- c("AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", 
+        "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY",
+        "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", 
+        "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", 
+        "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", 
+        "VT", "VA", "WA", "WV", "WI", "WY") # for now, exclude U.S. territories
+
+acs_dat <- list()
+
+for (i in 1:length(ST)) {
+    acs_df <- get_acs(geography = "block group",
+                  state = ST[i],
+                  variables = c("B03002_001",  # total pop, race denom
+                                "B03002_012",  # hisp
+                                "B03002_003",  # white
+                                "B03002_004",  # black
+                                "B03002_005",  # aian
+                                "B03002_006",  # asian
+                                "B03002_007",  # nhpi
+                                "B03002_008",  # other
+                                "B03002_009", # tom
+                                "C17002_001",  # poverty denom 
+                                "C17002_002", "C17002_003",  # below 1.00 
+                                "B15003_001",  # ed denom 
+                                "B15003_017", "B15003_018",  # hs, eq 
+                                "B15003_019", "B15003_020", "B15003_021", # some college 
+                                "B15003_022", "B15003_023", "B15003_024", "B15003_025"), # bach or higher 
+                  geometry = TRUE,
+                  year = 2021)
+    acs_df <- acs_df |>
+      group_by(GEOID) |>
+      pivot_wider(values_from = "estimate", names_from = "variable") |>
+      summarize(across(everything(), ~ first(na.omit(.)))) |>
+      mutate(pov_below = C17002_002 + C17002_003) |>
+      mutate(hs_eq = B15003_017 + B15003_018) |>
+      mutate(some_coll = B15003_019 + B15003_020 + B15003_021) |>
+      mutate(coll = B15003_022 + B15003_023 + B15003_024 + B15003_025) |>
+      rename(total = B03002_001, hisp = B03002_012, white = B03002_003, black = B03002_004, 
+             aian = B03002_005, asian = B03002_006, nhpi = B03002_007, other = B03002_008, 
+             tom = B03002_009, pov_denom = C17002_001, 
+             ed_denom = B15003_001) |>
+      select(!starts_with("B1")) |>
+      select(!starts_with("C1"))
+    
+    acs_dat[[i]] <- acs_df
+}
+
+acs_data <- do.call(rbind, acs_dat)
+
+empty_units <- acs_data[which(st_is_empty(acs_data) == TRUE), ]
+summary(empty_units) # these units have no population
+
+acs_data <- acs_data |>
+  mutate(hisp_p = hisp / total) |>
+  mutate(white_p = white / total) |>
+  mutate(black_p = black / total) |>
+  mutate(aian_p = aian / total) |>
+  mutate(asian_p = asian / total) |>
+  mutate(nhpi_p = nhpi / total) |>
+  mutate(other_p = other / total) |>
+  mutate(tom_p = tom / total) |>
+  mutate(pov_p = pov_below / pov_denom) |>
+  mutate(hs_eq_p = hs_eq / ed_denom) |>
+  mutate(some_coll_p = some_coll / ed_denom) |>
+  mutate(coll_p = coll / ed_denom) |>
+  mutate(no_hs_p = 1 - ((hs_eq + some_coll_p + some_coll_p) / ed_denom))
+
+names(acs_data) <- tolower(names(acs_data))
+  
+write.csv(acs_data, "data/acs_data.csv", row.names = FALSE)
+
+```
+
+# population centers
+We don't just want block groups; we want to know where the population is in that block group. We'll use population-weighted centroids later on to see if the measurement scale of EPA monitors intersects with these locations — in other words, is the majority of a population in an area likely captured within the monitor's measurement area.
+
+```{r}
+
+centroids <- read.csv("/Users/brenna/Documents/School/Research/aqs-inequities/aqs_inequities/CenPop2020_Mean_BG.csv")
+names(centroids) <- tolower(names(centroids))
+centroids <- st_as_sf(centroids, coords = c("longitude", "latitude"), 
+                 crs = 4326, agr = "constant")## |>
+  #st_transform(3857) # mercator
+
+# creating block group fips for join
+centroids$geoid <- paste0(str_pad(centroids$statefp, pad = "0", width = 2, side = "left"),
+                          str_pad(centroids$countyfp, pad = "0", width = 3, side = "left"),
+                          str_pad(centroids$tractce, pad = "0", width = 6, side = "left"),
+                          centroids$blkgrpce)
+
+```
+
+
+## buffers
+### creating buffers
+
+```{r}
+
+# stratify monitors by measurement scale
+mons_micro <- mons[which(mons$Measurement.Scale == "MICROSCALE"), ]
+mons_middle <- mons[which(mons$Measurement.Scale == "MIDDLE SCALE"), ]
+mons_neighborhood <- mons[which(mons$Measurement.Scale %in% c("NEIGHBORHOOD", "")), ] # this is the imputation
+mons_urban <- mons[which(mons$Measurement.Scale == "URBAN SCALE"), ]
+mons_regional <- mons[which(mons$Measurement.Scale == "REGIONAL SCALE"), ]
+
+ 
+# for sensitivity analysis in supplement
+    # we imputed the most common scale for unknowns; but we'll test how much the results would change if all monitors were at the smallest and largest scales; i.e., we'll impute micro scale and regional scale
+sa_mons_micro <- mons[which(mons$Measurement.Scale %in% c("MICROSCALE", "")), ]
+sa_mons_regional <- mons[which(mons$Measurement.Scale %in% c("REGIONAL REGIONAL", "")), ]
+
+# create the buffer for each measurement scale (in meters)
+
+table(mons$Measurement.Scale.Definition, mons$Measurement.Scale)
+
+
+micro_buffer_lower = st_buffer(mons_micro, 0.5)
+micro_buffer_upper = st_buffer(mons_micro, 100)
+middle_buffer_lower = st_buffer(mons_middle, 100)
+middle_buffer_upper = st_buffer(mons_middle, 500)
+neighborhood_buffer_lower = st_buffer(mons_neighborhood, 500)
+neighborhood_buffer_upper = st_buffer(mons_neighborhood, 4000)
+urban_buffer_lower = st_buffer(mons_urban, 4000)
+urban_buffer_upper = st_buffer(mons_urban, 50000)
+regional_buffer_lower = st_buffer(mons_regional,  50000)
+regional_buffer_upper = st_buffer(mons_regional, 150000)
+
+tm_shape(regional_buffer_upper) +
+  tm_polygons(col = "criteria", alpha = 0.5, lwd = 0)
+
+```
+
+### stratifying buffers by criteria pollutant
+
+```{r}
+
+micro_buffer_lower_by_criteria <- split(micro_buffer_lower, micro_buffer_lower$criteria, 6)
+micro_buffer_upper_by_criteria <- split(micro_buffer_upper, micro_buffer_upper$criteria, 6)
+middle_buffer_lower_by_criteria <- split(middle_buffer_lower, middle_buffer_lower$criteria, 6)
+middle_buffer_upper_by_criteria <- split(middle_buffer_upper, middle_buffer_upper$criteria, 6)
+neighborhood_buffer_lower_by_criteria <- split(neighborhood_buffer_lower, neighborhood_buffer_lower$criteria, 6)
+neighborhood_buffer_upper_by_criteria <- split(neighborhood_buffer_upper, neighborhood_buffer_upper$criteria, 6)
+urban_buffer_lower_by_criteria <- split(urban_buffer_lower, urban_buffer_lower$criteria, 6)
+urban_buffer_upper_by_criteria <- split(urban_buffer_upper, urban_buffer_upper$criteria, 6)
+regional_buffer_lower_by_criteria <- split(regional_buffer_lower, regional_buffer_lower$criteria, 6)
+regional_buffer_upper_by_criteria <- split(regional_buffer_upper, regional_buffer_upper$criteria, 6)
+
+tm_shape(neighborhood_buffer_upper_by_criteria$pm) +
+  tm_polygons(col = "criteria", lwd = 0)
+
+```
+
+
+### intersections by criteria pollutant
+Here we're checking which population-weighted block group centroids lie inside the buffer (measurement scale of a monitor) based on the minimum and maximum scales given. At a later point we may want to use the median for simplicity, but also report the min/max? That may or may not simplify it.
+
+We're also filtering out block groups which do not lie inside the buffers (observations where there is no `criteria` pollutant listed). We only want the block groups which lie inside. Then we can create binary variables (e.g., `upper_pm`, `lower_pm`) for each block group to tell us whether the block group is measured or not. Keep in mind, we don't care what scale the block group is measured at — only whether it was measured or not. Further down we'll combine the FIPS codes by pollutant across measurement scales. For instance, any FIPS with PM measured at any scale would be `upper_pm == "TRUE"`.
+
+We only really need the block group FIPS code, but we'll select a few more variables which might be helpful
+
+```{r}
+
+centroids <- st_transform(centroids, st_crs(mons))
+
+table(mons$Measurement.Scale, mons$criteria)
+tm_shape(us_states) +
+  tm_polygons() +
+  tm_shape(centroids) +
+  tm_dots(col = "black") +
+  tm_shape(micro_buffer_upper_by_criteria$pm) +
+  tm_polygons(col = "red", alpha = 0.5)
+
+tm_shape(micro_buffer_upper_by_criteria$pm[12, ]) +
+  tm_polygons(col = "red", alpha = 0.5, lwd = 10) +
+  
+  tm_shape(centroids) +
+  tm_dots(col = "black")
+
+# PM
+measured_bgc_micro_pm_upper <- st_join(centroids, micro_buffer_upper_by_criteria$pm, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_micro_pm_lower <- st_join(centroids, micro_buffer_lower_by_criteria$pm, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_middle_pm_upper <- st_join(centroids, middle_buffer_upper_by_criteria$pm, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_middle_pm_lower <- st_join(centroids, middle_buffer_lower_by_criteria$pm, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_neighborhood_pm_upper <- st_join(centroids, neighborhood_buffer_upper_by_criteria$pm, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_neighborhood_pm_lower <- st_join(centroids, neighborhood_buffer_lower_by_criteria$pm, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_urban_pm_upper <- st_join(centroids, urban_buffer_upper_by_criteria$pm, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_urban_pm_lower <- st_join(centroids, urban_buffer_lower_by_criteria$pm, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_regional_pm_upper <- st_join(centroids, regional_buffer_upper_by_criteria$pm, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_regional_pm_lower <- st_join(centroids, regional_buffer_lower_by_criteria$pm, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+
+# SO2
+measured_bgc_micro_so2_upper <- st_join(centroids, micro_buffer_upper_by_criteria$so2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_micro_so2_lower <- st_join(centroids, micro_buffer_lower_by_criteria$so2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_middle_so2_upper <- st_join(centroids, middle_buffer_upper_by_criteria$so2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_middle_so2_lower <- st_join(centroids, middle_buffer_lower_by_criteria$so2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_neighborhood_so2_upper <- st_join(centroids, neighborhood_buffer_upper_by_criteria$so2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_neighborhood_so2_lower <- st_join(centroids, neighborhood_buffer_lower_by_criteria$so2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_urban_so2_upper <- st_join(centroids, urban_buffer_upper_by_criteria$so2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_urban_so2_lower <- st_join(centroids, urban_buffer_lower_by_criteria$so2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_regional_so2_upper <- st_join(centroids, regional_buffer_upper_by_criteria$so2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_regional_so2_lower <- st_join(centroids, regional_buffer_lower_by_criteria$so2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+
+# NO2
+
+table(is.na(measured_bgc_micro_no2_upper$criteria))
+measured_bgc_micro_no2_upper <- st_join(centroids, micro_buffer_upper_by_criteria$no2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_micro_no2_lower <- st_join(centroids, micro_buffer_lower_by_criteria$no2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_middle_no2_upper <- st_join(centroids, middle_buffer_upper_by_criteria$no2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_middle_no2_lower <- st_join(centroids, middle_buffer_lower_by_criteria$no2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_neighborhood_no2_upper <- st_join(centroids, neighborhood_buffer_upper_by_criteria$no2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_neighborhood_no2_lower <- st_join(centroids, neighborhood_buffer_lower_by_criteria$no2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_urban_no2_upper <- st_join(centroids, urban_buffer_upper_by_criteria$no2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_urban_no2_lower <- st_join(centroids, urban_buffer_lower_by_criteria$no2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_regional_no2_upper <- st_join(centroids, regional_buffer_upper_by_criteria$no2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_regional_no2_lower <- st_join(centroids, regional_buffer_lower_by_criteria$no2, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+
+# CO
+measured_bgc_micro_co_upper <- st_join(centroids, micro_buffer_upper_by_criteria$co, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_micro_co_lower <- st_join(centroids, micro_buffer_lower_by_criteria$co, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_middle_co_upper <- st_join(centroids, middle_buffer_upper_by_criteria$co, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_middle_co_lower <- st_join(centroids, middle_buffer_lower_by_criteria$co, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_neighborhood_co_upper <- st_join(centroids, neighborhood_buffer_upper_by_criteria$co, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_neighborhood_co_lower <- st_join(centroids, neighborhood_buffer_lower_by_criteria$co, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_urban_co_upper <- st_join(centroids, urban_buffer_upper_by_criteria$co, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_urban_co_lower <- st_join(centroids, urban_buffer_lower_by_criteria$co, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_regional_co_upper <- st_join(centroids, regional_buffer_upper_by_criteria$co, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_regional_co_lower <- st_join(centroids, regional_buffer_lower_by_criteria$co, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+
+# O3
+measured_bgc_micro_o3_upper <- st_join(centroids, micro_buffer_upper_by_criteria$o3, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_micro_o3_lower <- st_join(centroids, micro_buffer_lower_by_criteria$o3, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_middle_o3_upper <- st_join(centroids, middle_buffer_upper_by_criteria$o3, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_middle_o3_lower <- st_join(centroids, middle_buffer_lower_by_criteria$o3, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_neighborhood_o3_upper <- st_join(centroids, neighborhood_buffer_upper_by_criteria$o3, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_neighborhood_o3_lower <- st_join(centroids, neighborhood_buffer_lower_by_criteria$o3, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_urban_o3_upper <- st_join(centroids, urban_buffer_upper_by_criteria$o3, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_urban_o3_lower <- st_join(centroids, urban_buffer_lower_by_criteria$o3, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_regional_o3_upper <- st_join(centroids, regional_buffer_upper_by_criteria$o3, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_regional_o3_lower <- st_join(centroids, regional_buffer_lower_by_criteria$o3, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+
+# PB
+measured_bgc_micro_pb_upper <- st_join(centroids, micro_buffer_upper_by_criteria$pb, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_micro_pb_lower <- st_join(centroids, micro_buffer_lower_by_criteria$pb, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_middle_pb_upper <- st_join(centroids, middle_buffer_upper_by_criteria$pb, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_middle_pb_lower <- st_join(centroids, middle_buffer_lower_by_criteria$pb, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_neighborhood_pb_upper <- st_join(centroids, neighborhood_buffer_upper_by_criteria$pb, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_neighborhood_pb_lower <- st_join(centroids, neighborhood_buffer_lower_by_criteria$pb, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_urban_pb_upper <- st_join(centroids, urban_buffer_upper_by_criteria$pb, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+measured_bgc_urban_pb_lower <- st_join(centroids, urban_buffer_lower_by_criteria$pb, join = st_within) |>
+  filter(!is.na(criteria)) |>
+  select(geoid, Measurement.Scale, 
+         Measurement.Scale.Definition, 
+         criteria)
+# measured_bgc_regional_pb <- st_join(centroids, regional_buffer_upper_by_criteria$pb, join = st_within)
+# no regional-scale lead monitors
+
+```
+
+let's make sure that worked properly
+
+```{r}
+
+# plotting the buffers
+tm_shape(regional_buffer_upper_by_criteria$o3) +
+  tm_polygons(, col = "criteria", alpha = 0.3, lwd = 0) +
+  tm_shape(micro_buffer_upper_by_criteria$o3) +
+  tm_polygons(col = "criteria") +
+  tm_shape(middle_buffer_upper_by_criteria$o3) +
+  tm_polygons(, col = "criteria", alpha = 0.3, lwd = 0) +
+  tm_shape(neighborhood_buffer_upper_by_criteria$o3) +
+  tm_polygons(, col = "criteria", alpha = 0.3, lwd = 0) +
+  tm_shape(urban_buffer_upper_by_criteria$o3) +
+  tm_polygons(, col = "criteria", alpha = 0.3, lwd = 0)
+
+# plotting the centroids that lie within the buffers
+tm_shape(measured_bgc_regional_o3_lower) +
+  tm_dots(, col = "criteria", alpha = 0.3) +
+  tm_shape(measured_bgc_urban_o3_lower) +
+  tm_dots(col = "criteria") +
+  tm_shape(measured_bgc_neighborhood_o3_lower) +
+  tm_dots(, col = "criteria", alpha = 0.3)
+  #tm_shape(measured_bgc_middle_o3_lower) +
+  #tm_polygons(, col = "criteria", alpha = 0.3, lwd = 0) +
+  #tm_shape(measured_bgc_micro_o3_lower) +
+  #tm_polygons(, col = "criteria", alpha = 0.3, lwd = 0)
+tm_shape(measured_bgc_regional_o3_upper) +
+  tm_dots(, col = "criteria", alpha = 0.3) +
+  tm_shape(measured_bgc_urban_o3_upper) +
+  tm_dots(col = "criteria") +
+  tm_shape(measured_bgc_neighborhood_o3_upper) +
+  tm_dots(, col = "criteria", alpha = 0.3)
+
+
+```
+
+### combining monitored FIPS by pollutant and range (upper/lower) across buffers
+
+```{r}
+
+
+measured_pm_upper <- rbind(measured_bgc_micro_pm_upper, measured_bgc_middle_pm_upper, 
+                           measured_bgc_neighborhood_pm_upper, measured_bgc_urban_pm_upper,
+                           measured_bgc_regional_pm_upper) |>
+  filter(!duplicated(geoid))
+measured_pm_lower <- rbind(measured_bgc_micro_pm_lower, measured_bgc_middle_pm_lower,
+                           measured_bgc_neighborhood_pm_lower, measured_bgc_urban_pm_lower,
+                           measured_bgc_regional_pm_lower) |>
+  filter(!duplicated(geoid))
+
+measured_so2_upper <- rbind(measured_bgc_micro_so2_upper, measured_bgc_middle_so2_upper, 
+                           measured_bgc_neighborhood_so2_upper, measured_bgc_urban_so2_upper,
+                           measured_bgc_regional_so2_upper) |>
+  filter(!duplicated(geoid))
+measured_so2_lower <- rbind(measured_bgc_micro_so2_lower, measured_bgc_middle_so2_lower,
+                           measured_bgc_neighborhood_so2_lower, measured_bgc_urban_so2_lower,
+                           measured_bgc_regional_so2_lower) |>
+  filter(!duplicated(geoid))
+
+measured_no2_upper <- rbind(measured_bgc_micro_no2_upper, measured_bgc_middle_no2_upper, 
+                           measured_bgc_neighborhood_no2_upper, measured_bgc_urban_no2_upper,
+                           measured_bgc_regional_no2_upper) |>
+  filter(!duplicated(geoid))
+measured_no2_lower <- rbind(measured_bgc_micro_no2_lower, measured_bgc_middle_no2_lower,
+                           measured_bgc_neighborhood_no2_lower, measured_bgc_urban_no2_lower,
+                           measured_bgc_regional_no2_lower) |>
+  filter(!duplicated(geoid))
+
+measured_co_upper <- rbind(measured_bgc_micro_co_upper, measured_bgc_middle_co_upper, 
+                           measured_bgc_neighborhood_co_upper, measured_bgc_urban_co_upper,
+                           measured_bgc_regional_co_upper) |>
+  filter(!duplicated(geoid))
+measured_co_lower <- rbind(measured_bgc_micro_co_lower, measured_bgc_middle_co_lower,
+                           measured_bgc_neighborhood_co_lower, measured_bgc_urban_co_lower,
+                           measured_bgc_regional_co_lower) |>
+  filter(!duplicated(geoid))
+
+measured_o3_upper <- rbind(measured_bgc_micro_o3_upper, measured_bgc_middle_o3_upper, 
+                           measured_bgc_neighborhood_o3_upper, measured_bgc_urban_o3_upper,
+                           measured_bgc_regional_o3_upper) |>
+  filter(!duplicated(geoid))
+measured_o3_lower <- rbind(measured_bgc_micro_o3_lower, measured_bgc_middle_o3_lower,
+                           measured_bgc_neighborhood_o3_lower, measured_bgc_urban_o3_lower,
+                           measured_bgc_regional_o3_lower) |>
+  filter(!duplicated(geoid))
+
+measured_pb_upper <- rbind(measured_bgc_micro_pb_upper, measured_bgc_middle_pb_upper, 
+                           measured_bgc_neighborhood_pb_upper, measured_bgc_urban_pb_upper) |>
+  filter(!duplicated(geoid))
+measured_pb_lower <- rbind(measured_bgc_micro_pb_lower, measured_bgc_middle_pb_lower,
+                           measured_bgc_neighborhood_pb_lower, measured_bgc_urban_pb_lower) |>
+  filter(!duplicated(geoid))
+
+
+```
+
+
+## merging with population characteristics
+Variables created and stored here need to be unique in the `acs_dat` dataframe.
+
+```{r}
+
+names(acs_dat) <- tolower(names(acs_dat))
+
+measured_pb_lower$pb_scale_l <- paste0(measured_pb_lower$criteria, 
+                                       ", ", measured_pb_lower$Measurement.Scale,
+                                       ", ", "lower")
+measured_pb_lower <- measured_pb_lower[, c("geoid", "pb_scale_l")] |>
+  st_drop_geometry()
+
+measured_pb_upper$pb_scale_u <- paste0(measured_pb_upper$criteria, 
+                                       ", ", measured_pb_upper$Measurement.Scale,
+                                       ", ", "upper")
+measured_pb_upper <- measured_pb_upper[, c("geoid", "pb_scale_u")] |>
+  st_drop_geometry()
+
+measured_pm_lower$pm_scale_l <- paste0(measured_pm_lower$criteria, 
+                                       ", ", measured_pm_lower$Measurement.Scale,
+                                       ", ", "lower")
+measured_pm_lower <- measured_pm_lower[, c("geoid", "pm_scale_l")] |>
+  st_drop_geometry()
+
+measured_pm_upper$pm_scale_u <- paste0(measured_pm_upper$criteria, 
+                                       ", ", measured_pm_upper$Measurement.Scale,
+                                       ", ", "upper")
+measured_pm_upper <- measured_pm_upper[, c("geoid", "pm_scale_u")] |>
+  st_drop_geometry()
+
+measured_no2_lower$no2_scale_l <- paste0(measured_no2_lower$criteria, 
+                                         ", ", measured_no2_lower$Measurement.Scale,
+                                         ", ", "lower")
+measured_no2_lower <- measured_no2_lower[, c("geoid", "no2_scale_l")] |>
+  st_drop_geometry()
+
+measured_no2_upper$no2_scale_u <- paste0(measured_no2_upper$criteria, 
+                                         ", ", measured_no2_upper$Measurement.Scale,
+                                         ", ", "upper")
+measured_no2_upper <- measured_no2_upper[, c("geoid", "no2_scale_u")] |>
+  st_drop_geometry()
+
+measured_so2_lower$so2_scale_l <- paste0(measured_so2_lower$criteria, 
+                                         ", ", measured_so2_lower$Measurement.Scale,
+                                         ", ", "lower")
+measured_so2_lower <- measured_so2_lower[, c("geoid", "so2_scale_l")] |>
+  st_drop_geometry()
+
+measured_so2_upper$so2_scale_u <- paste0(measured_so2_upper$criteria, 
+                                         ", ", measured_so2_upper$Measurement.Scale,
+                                         ", ", "upper")
+measured_so2_upper <- measured_so2_upper[, c("geoid", "so2_scale_u")] |>
+  st_drop_geometry()
+
+measured_co_lower$co_scale_l <- paste0(measured_co_lower$criteria, 
+                                       ", ", measured_co_lower$Measurement.Scale,
+                                       ", ", "lower")
+measured_co_lower <- measured_co_lower[, c("geoid", "co_scale_l")] |>
+  st_drop_geometry()
+
+measured_co_upper$co_scale_u <- paste0(measured_co_upper$criteria, 
+                                       ", ", measured_co_upper$Measurement.Scale,
+                                       ", ", "upper")
+measured_co_upper <- measured_co_upper[, c("geoid", "co_scale_u")] |>
+  st_drop_geometry()
+
+measured_o3_lower$o3_scale_l <- paste0(measured_o3_lower$criteria, 
+                                       ", ", measured_o3_lower$Measurement.Scale,
+                                       ", ", "lower")
+measured_o3_lower <- measured_o3_lower[, c("geoid", "o3_scale_l")] |>
+  st_drop_geometry()
+
+measured_o3_upper$o3_scale_u <- paste0(measured_o3_upper$criteria, 
+                                       ", ", measured_o3_upper$Measurement.Scale,
+                                       ", ", "upper")
+measured_o3_upper <- measured_o3_upper[, c("geoid", "o3_scale_u")] |>
+  st_drop_geometry()
+
+
+acs_merge <- merge(acs_data, measured_pb_lower, by = "geoid", all.x = TRUE) |>
+  merge(measured_pb_upper, by = "geoid", all.x = TRUE) |>
+  merge(measured_no2_lower, by = "geoid", all.x = TRUE) |>
+  merge(measured_no2_upper, by = "geoid", all.x = TRUE) |>
+  merge(measured_pm_lower, by = "geoid", all.x = TRUE) |>
+  merge(measured_pm_upper, by = "geoid", all.x = TRUE) |>
+  merge(measured_so2_lower, by = "geoid", all.x = TRUE) |>
+  merge(measured_so2_upper, by = "geoid", all.x = TRUE) |>
+  merge(measured_o3_lower, by = "geoid", all.x = TRUE) |>
+  merge(measured_o3_upper, by = "geoid", all.x = TRUE) |>
+  merge(measured_co_lower, by = "geoid", all.x = TRUE) |>
+  merge(measured_co_upper, by = "geoid", all.x = TRUE) |>
+  mutate(pb_measured_u = ifelse(is.na(pb_scale_u), 0, 1)) |>
+  mutate(pb_measured_l = ifelse(is.na(pb_scale_l), 0, 1)) |>
+  mutate(pm_measured_u = ifelse(is.na(pm_scale_u), 0, 1)) |>
+  mutate(pm_measured_l = ifelse(is.na(pm_scale_l), 0, 1)) |>
+  mutate(no2_measured_u = ifelse(is.na(no2_scale_u), 0, 1)) |>
+  mutate(no2_measured_l = ifelse(is.na(no2_scale_l), 0, 1)) |>
+  mutate(so2_measured_u = ifelse(is.na(so2_scale_u), 0, 1)) |>
+  mutate(so2_measured_l = ifelse(is.na(so2_scale_l), 0, 1)) |>
+  mutate(o3_measured_u = ifelse(is.na(o3_scale_u), 0, 1)) |>
+  mutate(o3_measured_l = ifelse(is.na(o3_scale_l), 0, 1)) |>
+  mutate(co_measured_u = ifelse(is.na(co_scale_u), 0, 1)) |>
+  mutate(co_measured_l = ifelse(is.na(co_scale_l), 0, 1))
+
+summary(acs_merge)
+
+```
+
+## save data
+
+```{r}
+
+acs_wo_geom <- st_drop_geometry(acs_merge)
+acs_geom <- acs_merge |>
+  select(geoid, geometry)
+
+write.csv(acs_wo_geom, "data/7020_data.csv", row.names = FALSE)
+st_write(acs_geom, "data/7020_geom.shp", append = TRUE)
+
+```
+
+
+
+

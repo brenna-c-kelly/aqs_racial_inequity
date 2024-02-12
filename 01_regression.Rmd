@@ -1,0 +1,883 @@
+---
+title: "01_regression"
+author: "Brenna Kelly"
+date: "2024-02-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## setup
+
+```{r}
+
+library(sp)
+library(sf)
+library(tmap)
+library(INLA)
+library(spdep)
+library(dplyr)
+library(moments)
+library(ggplot2)
+library(stringr)
+library(regclass)
+
+```
+
+## data
+
+```{r}
+
+acs <- read.csv("data/7020_data.csv")
+acs$geoid <- str_pad(acs$geoid, width = 12, pad = "0", side = "left")
+
+acs_geom <- st_read("data/7020_geom.shp")
+
+# merge by geoid
+acs <- merge(acs_geom, acs, by = "geoid")
+
+# drop empty geometries
+acs <- acs[which(st_is_empty(acs) == FALSE), ]
+
+# drop areas with no population
+empty_areas <- acs[which(is.na(acs$hisp_p)), ]
+acs <- acs[which(!acs$geoid %in% empty_areas$geoid), ]
+
+# fix poverty (some have 0)
+acs$pov_p <- ifelse(is.na(acs$pov_p), 0 , acs$pov_p)
+
+# scale 0-100
+acs <- acs |>
+  mutate(hisp_perc = hisp_p*100) |>
+  mutate(black_perc = black_p*100) |>
+  mutate(aian_perc = aian_p*100) |>
+  mutate(asian_perc = asian_p*100) |>
+  mutate(nhpi_perc = nhpi_p*100) |>
+  mutate(other_perc = other_p*100) |>
+  mutate(tom_perc = tom_p*100) |>
+  mutate(pov_perc = pov_p*100)
+acs <- acs |>
+  mutate(hisp_p_log = log(hisp_perc + min(acs$hisp_perc[which(acs$hisp_perc > 0)]))) |>
+  mutate(black_p_log = log(black_perc + min(acs$black_perc[which(acs$black_perc > 0)]))) |>
+  mutate(aian_p_log = log(aian_perc + min(acs$aian_perc[which(acs$aian_perc > 0)]))) |>
+  mutate(asian_p_log = log(asian_perc + min(acs$asian_perc[which(acs$asian_perc > 0)]))) |>
+  mutate(nhpi_p_log = log(nhpi_perc + min(acs$nhpi_perc[which(acs$nhpi_perc > 0)]))) |>
+  mutate(other_p_log = log(other_perc + min(acs$other_perc[which(acs$other_perc > 0)]))) |>
+  mutate(tom_p_log = log(tom_perc + min(acs$tom_perc[which(acs$tom_perc > 0)]))) |>
+  mutate(pov_p_log = log(pov_perc + min(acs$pov_perc[which(acs$pov_perc > 0)]))) |>
+  mutate(total_1k = total / 1000)
+
+acs$state <- str_sub(acs$geoid, start = 0, end = 2)
+
+write.csv(acs, "acs_inla.csv", row.names = FALSE)
+
+```
+
+
+### scaling, transformations
+
+```{r}
+
+# skewness(log(acs$hisp_p + min(acs$hisp_p[which(acs$hisp_p > 0)])), na.rm = TRUE)
+# 
+# skewness(acs$hisp_p)
+
+
+
+# summary(acs)
+
+# skewness(log(acs$pov_p + min(acs$pov_p[which(acs$pov_p > 0)])), na.rm = TRUE)
+
+```
+
+## pre-analysis exploration
+
+```{r}
+
+aggregate(acs$black_p, by = list(acs$o3_measured_u), FUN = mean, na.rm = TRUE)
+aggregate(acs$black_p, by = list(acs$o3_measured_l), FUN = mean, na.rm = TRUE)
+
+aggregate(acs$aian_p, by = list(acs$o3_measured_u), FUN = mean, na.rm = TRUE)
+aggregate(acs$aian_p, by = list(acs$o3_measured_l), FUN = mean, na.rm = TRUE)
+
+aggregate(acs$hisp_p, by = list(acs$o3_measured_u), FUN = mean, na.rm = TRUE)
+aggregate(acs$hisp_p, by = list(acs$o3_measured_l), FUN = mean, na.rm = TRUE)
+
+aggregate(acs$pov_p, by = list(acs$o3_measured_u), FUN = mean, na.rm = TRUE)
+aggregate(acs$pov_p, by = list(acs$o3_measured_l), FUN = mean, na.rm = TRUE)
+
+aggregate(acs$asian_p, by = list(acs$o3_measured_u), FUN = mean, na.rm = TRUE)
+aggregate(acs$asian_p, by = list(acs$o3_measured_l), FUN = mean, na.rm = TRUE)
+
+aggregate(acs$tom_p, by = list(acs$o3_measured_u), FUN = mean, na.rm = TRUE)
+aggregate(acs$tom_p, by = list(acs$o3_measured_l), FUN = mean, na.rm = TRUE)
+
+aggregate(acs$other_p, by = list(acs$o3_measured_u), FUN = mean, na.rm = TRUE)
+aggregate(acs$other_p, by = list(acs$o3_measured_l), FUN = mean, na.rm = TRUE)
+
+aggregate(acs$total, by = list(acs$o3_measured_u), FUN = mean, na.rm = TRUE)
+aggregate(acs$total, by = list(acs$o3_measured_l), FUN = mean, na.rm = TRUE)
+
+aggregate(acs$coll_p, by = list(acs$o3_measured_u), FUN = mean, na.rm = TRUE)
+aggregate(acs$coll_p, by = list(acs$o3_measured_l), FUN = mean, na.rm = TRUE)
+
+```
+
+## spatial structure
+
+```{r}
+
+# area id for each observation
+# acs$idarea <- 1:nrow(acs)
+# 
+# ## building the spatial weight matrix
+# 
+# # centroids
+# acs.geom <- st_geometry(acs)
+# acs.coords <- st_centroid(acs.geom)
+# 
+# # plot(acs.geom, reset = FALSE)
+# # plot(acs.coords, pch = 16, col = 2, add = TRUE)
+# 
+# # queen's case boundaries
+# acs_nb <- poly2nb(acs)
+# 
+# summary(acs_nb)
+# acs_nb
+# # acs_nb <- acs_nb[-c(3928, 3929, 15237, 20928, 33392, 36909, 48512, 
+# #                     53416, 53423, 53472, 96818, 97230, 97256, 97605, 
+# #                     102598, 107669, 109842, 110179, 110183, 137369, 
+# #                     141538, 153359, 155904, 160601, 167742, 172373, 
+# #                     191215, 230418, 231154, 231156, 231362, 232786,
+# #                     234668, 235531)]
+# acs_nb
+# 
+# no_neighbors <- c(3928, 3929, 15237, 20928, 33392, 36909, 48512, 
+#                   53416, 53423, 53472, 96818, 97230, 97256, 97605, 
+#                   102598, 107669, 109842, 110179, 110183, 137369, 
+#                   141538, 153359, 155904, 160601, 167742, 172373, 
+#                   191215, 230418, 231154, 231156, 231362, 232786,
+#                   234668, 235531)
+# 
+# no_neighbors <- acs[c(3928, 3929, 15237, 20928, 33392, 36909, 48512, 
+#                     53416, 53423, 53472, 96818, 97230, 97256, 97605, 
+#                     102598, 107669, 109842, 110179, 110183, 137369, 
+#                     141538, 153359, 155904, 160601, 167742, 172373, 
+#                     191215, 230418, 231154, 231156, 231362, 232786,
+#                     234668, 235531), ]# |>
+#   #st_drop_geometry()
+# no_neighbors
+# no_neighbors[1]
+# 
+# acs <- acs[-c(no_neighbors), ]
+# 
+# acs[c(no_neighbors), ]
+# 
+# acs_nb <- poly2nb(acs)
+# summary(acs_nb)
+# 
+# nb_contiguity <- st_contiguity(acs)
+# nb_k1 <- st_knn(st_centroid(acs), 1)
+# nb_mixed <- nb_union(nb_contiguity, nb_k1)
+# wt <- st_weights(nb_mixed)
+# 
+# test <- st_weights(nb_k1)
+# 
+# 
+# acs_nb[ c(3928, 3929, 15237, 20928, 33392, 36909, 48512, 
+#                   53416, 53423, 53472, 96818, 97230, 97256, 97605, 
+#                   102598, 107669, 109842, 110179, 110183, 137369, 
+#                   141538, 153359, 155904, 160601, 167742, 172373, 
+#                   191215, 230418, 231154, 231156, 231362, 232786,
+#                   234668, 235531)]
+# 
+# test <- knn2nb(knearneigh(acs.coords, k = 1))
+# summary(test)
+# 
+# no_neighbors[1]
+# 
+# acs[]
+# 
+# acs_nb[[3928]]
+# 
+# acs_nb[[230418]]
+# 
+# acs[no_neighbors[1], ]
+# 
+# acs_nb[[1]]
+# 
+# st_nearest_feature(acs[no_neighbors[1], ], acs)
+# 
+# 
+# Syr2 <- as_Spatial(acs)
+# coords <- coordinates(Syr2)
+# Sy2_nb <- edit.nb(acs_nb, coords, polys = Syr2)
+# 
+# edit(acs_nb, coords)
+# #Sy2_nb <- edit.nb(acs_nb, acs.coords, polys = acs)
+# 
+# 
+# c(no_neighbors[1] - 1, no_neighbors[1] + 1)
+# 
+# str(no_neighbors[1])
+# geoid <- no_neighbors[1, "geoid"] |>
+#   st_drop_geometry()
+# acs_nb[14665]
+# st_nearest_feature(no_neighbors[1, ], acs)
+# 
+# no_neighbors[i, ]
+# # find the closest region, in terms of fips
+# for(i in 1:length(no_neighbors)) {
+#   
+#   index <- no_neighbors[i]
+#   
+#   acs_nb[[index]] <- c(no_neighbors[1] - 1, no_neighbors[1] + 1)
+#     #index - 1 #st_nearest_feature(acs[no_neighbors[i], ], acs)
+#   
+# }
+# 
+# 
+# st_nearest_feature(acs[no_neighbors[235530], ], acs)
+# str(acs_nb)
+# 
+# # # delauney triangulation
+# # Sy3_nb <- tri2nb(Syracuse.coords)
+# # 
+# # # binary spatial weights (more neighbors not downweighted; i.e., style != 'W')
+# # Sy1_lw_B <- nb2listw(Sy1_nb, style = 'B')
+# # inverse distance weighting
+# dists <- nbdists(acs_nb, acs.coords)
+# 
+# inverse_distance <- function(x) {1/(x/1000)}
+# 
+# idw <- lapply(dists, inverse_distance)
+# 
+# acs_lw_idwB <- nb2listw(acs_nb, glist = idw, style = "B", zero.policy = TRUE)
+
+```
+
+### global Moran's I test for autocorrelation
+
+```{r}
+# 
+# moran.test(acs$pm_measured_l, 
+#            listw = acs_lw_idwB, 
+#            alternative = "two.sided", 
+#            randomisation = TRUE, zero.policy = TRUE)
+
+# # monte carlo method
+# moran.mc(boston$logCMEDV, 
+#          listw = acs_lw_idwB, 
+#          nsim = 999, 
+#          alternative = 'greater')
+
+```
+
+### local Moran's I; spatial pattern of autocorrelation
+
+```{r}
+
+# lm1 = localmoran(acs$, 
+#                  listw = acs_lw_idwB, 
+#                  alternative = "two.sided")
+# 
+# acs$pval.bin <- as.factor(ifelse(acs$pval < 0.05, "Significant", "Not-significant"))
+# 
+# tm_shape(boston) + 
+#   tm_fill("pval.bin") +
+#   tm_borders() +
+#   tm_layout(main.title = "Local Moran's I (z-scores)",
+#             main.title.size = 1,
+#             legend.position = c("left", "bottom"))
+
+```
+
+### spatial weight matrix
+
+```{r}
+
+# acs_knn <- knn2nb(knearneigh(acs.coords, k = 2))
+# ?knearneigh
+# 
+# ?edit.nb
+# 
+# acs_w <- nb2mat(nb_k1, zero.policy = TRUE)
+# 
+# acs.listw <- nb2listw(acs_knn, zero.policy = TRUE) # neighbors
+# # acs_w <- nb2mat(acs.listw) # INLA
+# 
+
+```
+
+### inla graph
+
+```{r}
+
+# map
+# map <- as_Spatial(acs$geometry)
+#codes <- rgdal::make_EPSG()
+#codes[which(codes$code == "4326"), ]
+# map <- spTransform(map,
+#                    CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=37.5 +lon_0=-96 +ellps=GRS80 +datum=NAD83"))
+# 
+# sapply(slot(map, "polygons"), function(x){slot(x, "ID")})
+# 
+# 
+# map@data$geoid <- acs$geoid
+# rownames(map@data) <- acs$geoid
+# 
+# rownames(acs) <- 1:nrow(acs)
+# 
+# SpatialPolygonsDataFrame(map, acs), match.ID = TRUE)
+# 
+# 
+# nb <- poly2nb(map)
+
+nb <- poly2nb(acs)
+nb2INLA("map.adj", nb)
+g <- inla.read.graph(filename = "map.adj")
+
+acs$idarea <- 1:nrow(acs)
+acs$idarea_2 <- 1:nrow(acs)
+
+```
+
+
+
+## regression with INLA
+not looping because... ugh
+
+```{r}
+
+## running 12 inla models (one for each pollutant-scale) and saving them into a list; the saving the list to an rds file
+
+inla_results <- list()
+
+inla_results[["inla_co_l"]] <- inla(co_measured_l ~ hisp_p_log + black_p_log + 
+                                      aian_p_log + asian_p_log + nhpi_p_log + 
+                                      other_p_log + tom_p_log + offset(total_1k) + 
+                                      f(idarea, model = "besag", graph = g, scale.model = TRUE) +
+                                      f(idarea_2, model = "iid"),  
+                                    data = acs, family = "binomial",
+                                    control.inla= list(int.strategy = "eb"),
+                                    control.compute = list(dic = TRUE, waic = TRUE),
+                                    control.predictor = list(compute = TRUE))
+inla_results[["inla_co_u"]] <- inla(co_measured_u ~ hisp_p_log + black_p_log + 
+                                      aian_p_log + asian_p_log + nhpi_p_log + 
+                                      other_p_log + tom_p_log + offset(total_1k) + 
+                                      f(idarea, model = "besag", graph = g, scale.model = TRUE) +
+                                      f(idarea_2, model = "iid"),  
+                                    data = acs, family = "binomial",
+                                    control.inla= list(int.strategy = "eb"),
+                                    control.compute = list(dic = TRUE, waic = TRUE),
+                                    control.predictor = list(compute = TRUE))
+
+inla_results[["inla_no2_l"]] <- inla(no2_measured_l ~ hisp_p_log + black_p_log + 
+                                       aian_p_log + asian_p_log + nhpi_p_log + 
+                                       other_p_log + tom_p_log + offset(total_1k) + 
+                                       f(idarea, model = "besag", graph = g, scale.model = TRUE) +
+                                       f(idarea_2, model = "iid"),  
+                                     data = acs, family = "binomial",
+                                     control.inla= list(int.strategy = "eb"),
+                                     control.compute = list(dic = TRUE, waic = TRUE),
+                                     control.predictor = list(compute = TRUE))
+inla_results[["inla_no2_u"]] <- inla(no2_measured_u ~ hisp_p_log + black_p_log + 
+                                       aian_p_log + asian_p_log + nhpi_p_log + 
+                                       other_p_log + tom_p_log + offset(total_1k) + 
+                                       f(idarea, model = "besag", graph = g, scale.model = TRUE) +
+                                       f(idarea_2, model = "iid"),  
+                                     data = acs, family = "binomial",
+                                     control.inla= list(int.strategy = "eb"),
+                                     control.compute = list(dic = TRUE, waic = TRUE),
+                                     control.predictor = list(compute = TRUE))
+
+inla_results[["inla_pm_l"]] <- inla(pm_measured_l ~ hisp_p_log + black_p_log + 
+                                      aian_p_log + asian_p_log + nhpi_p_log + 
+                                      other_p_log + tom_p_log + offset(total_1k) + 
+                                      f(idarea, model = "besag", graph = g, scale.model = TRUE) +
+                                      f(idarea_2, model = "iid"),  
+                                    data = acs, family = "binomial",
+                                    control.inla= list(int.strategy = "eb"),
+                                    control.compute = list(dic = TRUE, waic = TRUE),
+                                    control.predictor = list(compute = TRUE))
+inla_results[["inla_pm_u"]] <- inla(pm_measured_u ~ hisp_p_log + black_p_log + 
+                                      aian_p_log + asian_p_log + nhpi_p_log + 
+                                      other_p_log + tom_p_log + offset(total_1k) + 
+                                      f(idarea, model = "besag", graph = g, scale.model = TRUE) +
+                                      f(idarea_2, model = "iid"),  
+                                    data = acs, family = "binomial",
+                                    control.inla= list(int.strategy = "eb"),
+                                    control.compute = list(dic = TRUE, waic = TRUE),
+                                    control.predictor = list(compute = TRUE))
+
+
+inla_results[["inla_pb_l"]] <- inla(pb_measured_l ~ hisp_p_log + black_p_log + 
+                                      aian_p_log + asian_p_log + nhpi_p_log + 
+                                      other_p_log + tom_p_log + offset(total_1k) + 
+                                      f(idarea, model = "besag", graph = g, scale.model = TRUE) +
+                                      f(idarea_2, model = "iid"),  
+                                    data = acs, family = "binomial",
+                                    control.inla= list(int.strategy = "eb"),
+                                    control.compute = list(dic = TRUE, waic = TRUE),
+                                    control.predictor = list(compute = TRUE))
+inla_results[["inla_pb_u"]] <- inla(pb_measured_u ~ hisp_p_log + black_p_log + 
+                                      aian_p_log + asian_p_log + nhpi_p_log + 
+                                      other_p_log + tom_p_log + offset(total_1k) + 
+                                      f(idarea, model = "besag", graph = g, scale.model = TRUE) +
+                                      f(idarea_2, model = "iid"),  
+                                    data = acs, family = "binomial",
+                                    control.inla= list(int.strategy = "eb"),
+                                    control.compute = list(dic = TRUE, waic = TRUE),
+                                    control.predictor = list(compute = TRUE))
+
+inla_results[["inla_so2_l"]] <- inla(so2_measured_l ~ hisp_p_log + black_p_log + 
+                                       aian_p_log + asian_p_log + nhpi_p_log + 
+                                       other_p_log + tom_p_log + offset(total_1k) + 
+                                       f(idarea, model = "besag", graph = g, scale.model = TRUE) +
+                                       f(idarea_2, model = "iid"),  
+                                     data = acs, family = "binomial",
+                                     control.inla= list(int.strategy = "eb"),
+                                     control.compute = list(dic = TRUE, waic = TRUE),
+                                     control.predictor = list(compute = TRUE))
+inla_results[["inla_so2_u"]] <- inla(so2_measured_u ~ hisp_p_log + black_p_log + 
+                                       aian_p_log + asian_p_log + nhpi_p_log + 
+                                       other_p_log + tom_p_log + offset(total_1k) + 
+                                       f(idarea, model = "besag", graph = g, scale.model = TRUE) +
+                                       f(idarea_2, model = "iid"),  
+                                     data = acs, family = "binomial",
+                                     control.inla= list(int.strategy = "eb"),
+                                     control.compute = list(dic = TRUE, waic = TRUE),
+                                     control.predictor = list(compute = TRUE))
+
+inla_results[["inla_o3_l"]] <- inla(o3_measured_l ~ hisp_p_log + black_p_log + 
+                                      aian_p_log + asian_p_log + nhpi_p_log + 
+                                      other_p_log + tom_p_log + offset(total_1k) + 
+                                      f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
+                                      f(idarea_2, model = "iid"),  
+                                    data = acs, family = "binomial",
+                                    control.inla= list(int.strategy = "eb"),
+                                    control.compute = list(dic = TRUE, waic = TRUE),
+                                    control.predictor = list(compute = TRUE))
+inla_results[["inla_o3_u"]] <- inla(o3_measured_u ~ hisp_p_log + black_p_log + 
+                                      aian_p_log + asian_p_log + nhpi_p_log + 
+                                      other_p_log + tom_p_log + offset(total_1k) + 
+                                      f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
+                                      f(idarea_2, model = "iid"), 
+                                    data = acs, family = "binomial",
+                                    control.inla= list(int.strategy = "eb"),
+                                    control.compute = list(dic = TRUE, waic = TRUE),
+                                    control.predictor = list(compute = TRUE))
+
+
+saveRDS(inla_results, file = "data/inla_results.rds")
+
+
+vars <- c("pb_measured_u"), "pb_measured_l", 
+          "pm_measured_u", "pm_measured_l", 
+          "no2_measured_u", "no2_measured_l",
+          "so2_measured_u", "so2_measured_l",
+          "o3_measured_u", "o3_measured_l",
+          "co_measured_u", "co_measured_l")
+
+system.time(
+  
+  test <- inla(co_measured_u ~ hisp_p_log + black_p_log + aian_p_log + 
+                    asian_p_log + nhpi_p_log + other_p_log + tom_p_log + offset(total_1k) + 
+                    f(idarea, model = "iid", graph = g), 
+                  data = acs, family = "binomial",
+                  control.inla= list(int.strategy = "eb"),
+                  control.compute = list(dic = TRUE, waic = TRUE),
+                  control.predictor = list(compute = TRUE))
+  
+)
+
+acs_id <- acs[which(acs$state %in% c("45", "12")), ]
+nb_id <- poly2nb(acs_id)
+nb2INLA("map_id.adj", nb_id)
+g_id <- inla.read.graph(filename = "map_id.adj")
+
+acs_id$idarea <- 1:nrow(acs_id)
+acs_id$idarea_2 <- 1:nrow(acs_id)
+
+system.time(test <- inla(co_measured_l ~ hisp_p_log + black_p_log + aian_p_log + 
+                           asian_p_log + nhpi_p_log + other_p_log + tom_p_log + offset(total_1k) + 
+                           f(idarea, model = "besag", graph = g, scale.model = TRUE) +
+                           f(idarea_2, model = "iid"), 
+                         data = acs, family = "binomial",
+                         control.inla= list(int.strategy = "eb"),
+                         control.compute = list(dic = TRUE, waic = TRUE),
+                         control.predictor = list(compute = TRUE)))
+
+test <- inla(co_measured_l ~ hisp_p_log + black_p_log + aian_p_log + 
+               asian_p_log + nhpi_p_log + other_p_log + tom_p_log + offset(total_1k) + 
+               f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
+               f(idarea_2, model = "iid"), 
+             data = acs_id, family = "binomial",
+             control.inla= list(int.strategy = "eb"),
+             control.compute = list(dic = TRUE, waic = TRUE),
+                 control.predictor = list(compute = TRUE))
+summary(test)
+
+inla_results[[1]] <- inla_o3_u
+
+summary(inla_o3_u)
+
+saveRDS(inla_results, file = "data/inla_results.rds")
+
+inla_pm_u$summary.fixed
+data.frame(inla_pm_u$summary.fixed[, 1],
+           exp(inla_pm_u$summary.fixed[, c(2, 4:6)]))
+
+summary(inla_o3_l)
+exp(inla_o3_u$summary.fixed)
+exp(inla_o3_l$summary.fixed)
+
+o3_u <- inla_o3_u$summary.fixed
+o3_u$scale <- "upper"
+o3_l <- inla_o3_l$summary.fixed
+o3_l$scale <- "lower"
+
+o3_res <- rbind(o3_l, o3_u)
+res <- o3_res
+
+```
+
+
+## inla function, loop
+
+```{r}
+
+inla_fx <- function(x) {
+
+  inla_res <- inla(x ~ hisp_p_log + black_p_log + aian_p_log + 
+                        asian_p_log + nhpi_p_log + other_p_log + tom_p_log + 
+                        offset(total_1k),# + 
+                        #f(idarea, model = "bym2", graph = g), 
+                      data = acs, family = "binomial",
+                      control.inla= list(int.strategy = "eb"),
+                      control.compute = list(dic = TRUE, waic = TRUE),
+                      control.predictor = list(compute = TRUE))
+  inla_res
+}
+
+
+vars <- c("pb_measured_u"), "pb_measured_l", 
+          "pm_measured_u", "pm_measured_l", 
+          "no2_measured_u", "no2_measured_l",
+          "so2_measured_u", "so2_measured_l",
+          "o3_measured_u", "o3_measured_l",
+          "co_measured_u", "co_measured_l")
+
+
+
+for(i in 1:length(vars)) {
+  
+  inla_results[[i]] <- inla_fx(vars[i])
+  
+}
+saveRDS(inla_results, file = "data/inla_results.rds")
+
+```
+
+
+## forest plot
+
+```{r}
+# extract model results
+res <- o3_res #summary(fit_intx)$coefs.SE.CI
+
+res <- tibble::rownames_to_column(res, "variable")
+res$label <- case_when(grepl("hisp", res$variable) == TRUE ~ "Hispanic or Latinx",
+                       grepl("black", res$variable) == TRUE ~ "Black or African American",
+                       grepl("aian", res$variable) == TRUE ~ "American Indian or Alaska Native",
+                       grepl("asian", res$variable) == TRUE ~ "Asian",
+                       grepl("nhpi", res$variable) == TRUE ~ "Native Hawaiian or Other Pacific Islander",
+                       grepl("other", res$variable) == TRUE ~ "Some Other Race",
+                       grepl("tom", res$variable) == TRUE ~ "Two or More Races")
+res$label <- ifelse(grepl("1", res$variable) == TRUE, paste0(res$label, ", upper"),
+                    paste0(res$label, ", lower"))
+
+
+res$mean <- round(exp(res$mean), 3)
+res$`0.025quant` <- round(exp(res$`0.025quant`), 3)
+res$`0.975quant` <- round(exp(res$`0.975quant`), 3)
+
+res <- res[, c("variable", "mean", "0.025quant", "0.975quant", "scale")]
+
+res$sig <- ifelse(res$`0.025quant` < 1 & res$`0.025quant` < 1, "neg", NA)
+res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
+res
+# figure
+
+res |>
+  filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
+  ggplot(aes(y = label, color = scale, group = scale)) +
+  theme_classic() +
+  geom_point(aes(x = mean), size = 3) +
+  #scale_size_manual(values = c(1, 3)) +
+  scale_color_manual(values = c("#ff2908","#f78e75")) +
+  geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
+  labs(x = "Odds of having O3 monitor (log scale)") +
+  coord_cartesian(xlim = c(0.4, 1.5)) +
+  geom_vline(xintercept = 1, linetype = "solid") +
+  geom_vline(xintercept = c(0.75, 1.25, 1.5, 1.75, 2), alpha = 0.5, linetype="dotted") +
+  scale_x_continuous(trans = 'log10') +
+  theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank()) + 
+  geom_text(aes(x = (`0.975quant` + 0.07), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold", size = 4) +
+  geom_text(aes(x = 0.4, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+
+
+
+```
+
+
+
+```{r}
+
+
+us_states <- get_acs(geography = "state",
+                     variables = c("B03002_001"),
+                     geometry = TRUE,
+                     year = 2021)
+us_states <- st_transform(us_states, aea)
+
+us_states_cont <- us_states |>
+  filter(!NAME %in% c("Alaska", "Hawaii", "Puerto Rico"))
+us_states <- us_states |>
+  filter(NAME == "Alaska")
+ak <- st_transform(ak, 3338)
+hi <- us_states |>
+  filter(NAME == "Hawaii") |>
+  st_transform(990002)
+hi <- st_transform(hi, "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=37.5 +lon_0=-96 +ellps=GRS80 +datum=NAD83")
+
+## o3
+o3_buffer_l <- rbind(regional_buffer_lower_by_criteria$o3,
+                     urban_buffer_lower_by_criteria$o3,
+                     neighborhood_buffer_lower_by_criteria$o3,
+                     middle_buffer_lower_by_criteria$o3,
+                     micro_buffer_lower_by_criteria$o3)
+o3_buffer_u <- rbind(regional_buffer_upper_by_criteria$o3,
+                     urban_buffer_upper_by_criteria$o3,
+                     neighborhood_buffer_upper_by_criteria$o3,
+                     middle_buffer_upper_by_criteria$o3,
+                     micro_buffer_upper_by_criteria$o3)
+o3_buffer_u_extra <- rbind(neighborhood_buffer_upper_by_criteria$o3,
+                            middle_buffer_upper_by_criteria$o3,
+                            micro_buffer_upper_by_criteria$o3)
+o3_buffer_l_extra <- rbind(neighborhood_buffer_lower_by_criteria$o3,
+                            middle_buffer_lower_by_criteria$o3,
+                            micro_buffer_lower_by_criteria$o3)
+o3_map <- tm_shape(us_states) +
+  tm_polygons(col = "gray95", lwd = 0.5) +
+  tm_shape(o3_buffer_u) +
+  tm_polygons(col = "#f78e75", lwd = 0, alpha = 0.4) +
+  tm_shape(o3_buffer_l) +
+  tm_polygons(lwd = 0, alpha = 0.4, col = "#ff2908") +
+  tm_shape(o3_buffer_u_extra) +
+  tm_polygons(lwd = 1.5, col = "#f78e75", border.col = "#f78e75") +
+  tm_shape(o3_buffer_l_extra) +
+  tm_polygons(lwd = 1.5, col = "#ff2908", border.col = "#ff2908")
+
+o3_ak_map <- tm_shape(ak) +
+  tm_polygons(col = "gray95", lwd = 0.5) +
+  tm_shape(o3_buffer_u) +
+  tm_polygons(col = "#f78e75", lwd = 0, alpha = 0.4) +
+  tm_shape(o3_buffer_l) +
+  tm_polygons(lwd = 0, alpha = 0.4, col = "#ff2908")
+tm_shape(hi) +
+  tm_polygons(col = "gray95", lwd = 0.5) +
+  tm_shape(o3_buffer_u) +
+  tm_polygons(col = "#f78e75", lwd = 0, alpha = 0.4) +
+  tm_shape(o3_buffer_l) +
+  tm_polygons(lwd = 0, alpha = 0.4, col = "#ff2908")
+
+
+tm_shape(pm_buffer_u) +
+  tm_polygons(col = "#90d9b8", lwd = 0, alpha = 0.2) +
+  tm_shape(pm_buffer_l) +
+  tm_polygons(lwd = 0, alpha = 0.2, col = "#22b573") +
+  tm_shape(pm_buffer_u_extra) +
+  tm_polygons(lwd = 1.5, col = "#90d9b8", border.col = "#90d9b8") +
+  tm_shape(pm_buffer_l_extra) +
+  tm_polygons(lwd = 1.5, col = "#22b573", border.col = "#22b573") +
+  tm_shape(o3_buffer_u) +
+  tm_polygons(col = "#f78e75", lwd = 0, alpha = 0.2) +
+  tm_shape(o3_buffer_l) +
+  tm_polygons(lwd = 0, alpha = 0.2, col = "#ff2908") +
+  tm_shape(o3_buffer_u_extra) +
+  tm_polygons(lwd = 1.5, col = "#f78e75", border.col = "#f78e75") +
+  tm_shape(o3_buffer_l_extra) +
+  tm_polygons(lwd = 1.5, col = "#ff2908", border.col = "#ff2908")
+
+tmap_arrange(o3_map, o3_ak_map)
+
+aea
+
+## no2
+no2_buffer_u <- rbind(regional_buffer_upper_by_criteria$no2,
+                      urban_buffer_upper_by_criteria$no2,
+                      neighborhood_buffer_upper_by_criteria$no2,
+                      middle_buffer_upper_by_criteria$no2,
+                      micro_buffer_upper_by_criteria$no2)
+no2_buffer_l <- rbind(regional_buffer_lower_by_criteria$no2,
+                      urban_buffer_lower_by_criteria$no2,
+                      neighborhood_buffer_lower_by_criteria$no2,
+                      middle_buffer_lower_by_criteria$no2,
+                      micro_buffer_lower_by_criteria$no2)
+no2_buffer_u_extra <- rbind(neighborhood_buffer_upper_by_criteria$no2,
+                            middle_buffer_upper_by_criteria$no2,
+                            micro_buffer_upper_by_criteria$no2)
+no2_buffer_l_extra <- rbind(neighborhood_buffer_lower_by_criteria$no2,
+                            middle_buffer_lower_by_criteria$no2,
+                            micro_buffer_lower_by_criteria$no2)
+no2_map <- tm_shape(us_states) +
+  tm_polygons(col = "gray95", lwd = 0.5) +
+  tm_shape(no2_buffer_u) +
+  tm_polygons(col = "#ce7fad", lwd = 0, alpha = 0.35) +
+  tm_shape(no2_buffer_l) +
+  tm_polygons(lwd = 0, alpha = 0.35, col = "#9e005d") +
+  tm_shape(no2_buffer_u_extra) +
+  tm_polygons(lwd = 1.5, col = "#ce7fad", border.col = "#ce7fad") +
+  tm_shape(no2_buffer_l_extra) +
+  tm_polygons(lwd = 1.5, col = "#9e005d", border.col = "#9e005d")
+
+
+
+
+## so2
+so2_buffer_u <- rbind(regional_buffer_upper_by_criteria$so2,
+                      urban_buffer_upper_by_criteria$so2,
+                      neighborhood_buffer_upper_by_criteria$so2,
+                      middle_buffer_upper_by_criteria$so2,
+                      micro_buffer_upper_by_criteria$so2)
+so2_buffer_l <- rbind(regional_buffer_lower_by_criteria$so2,
+                      urban_buffer_lower_by_criteria$so2,
+                      neighborhood_buffer_lower_by_criteria$so2,
+                      middle_buffer_lower_by_criteria$so2,
+                      micro_buffer_lower_by_criteria$so2)
+so2_buffer_u_extra <- rbind(neighborhood_buffer_upper_by_criteria$so2,
+                            middle_buffer_upper_by_criteria$so2,
+                            micro_buffer_upper_by_criteria$so2)
+so2_buffer_l_extra <- rbind(neighborhood_buffer_lower_by_criteria$so2,
+                            middle_buffer_lower_by_criteria$so2,
+                            micro_buffer_lower_by_criteria$so2)
+so2_map <- tm_shape(us_states) +
+  tm_polygons(col = "gray95", lwd = 0.5) +
+  tm_shape(so2_buffer_u) +
+  tm_polygons(col = "#7fb7dd", lwd = 0, alpha = 0.5) +
+  tm_shape(so2_buffer_l) +
+  tm_polygons(lwd = 0, alpha = 0.5, col = "#0071bc") +
+  tm_shape(so2_buffer_u_extra) +
+  tm_polygons(lwd = 1.5, col = "#7fb7dd", border.col = "#7fb7dd") +
+  tm_shape(so2_buffer_l_extra) +
+  tm_polygons(lwd = 1.5, col = "#0071bc", border.col = "#0071bc")
+
+
+## co
+co_buffer_u <- rbind(regional_buffer_upper_by_criteria$co,
+                     urban_buffer_upper_by_criteria$co,
+                     neighborhood_buffer_upper_by_criteria$co,
+                     middle_buffer_upper_by_criteria$co,
+                     micro_buffer_upper_by_criteria$co)
+co_buffer_l <- rbind(regional_buffer_lower_by_criteria$co,
+                     urban_buffer_lower_by_criteria$co,
+                     neighborhood_buffer_lower_by_criteria$co,
+                     middle_buffer_lower_by_criteria$co,
+                     micro_buffer_lower_by_criteria$co)
+co_buffer_u_extra <- rbind(neighborhood_buffer_upper_by_criteria$co,
+                            middle_buffer_upper_by_criteria$co,
+                            micro_buffer_upper_by_criteria$co)
+co_buffer_l_extra <- rbind(neighborhood_buffer_lower_by_criteria$co,
+                            middle_buffer_lower_by_criteria$co,
+                            micro_buffer_lower_by_criteria$co)
+
+co_map <- tm_shape(us_states) +
+  tm_polygons(col = "gray95", lwd = 0.5) +
+  tm_shape(co_buffer_u) +
+  tm_polygons(col = "#7fd3cd", lwd = 0, alpha = 0.5) +
+  tm_shape(co_buffer_l) +
+  tm_polygons(lwd = 0, alpha = 0.5, col = "#00a99d") +
+  tm_shape(co_buffer_u_extra) +
+  tm_polygons(lwd = 1.5, col = "#7fd3cd", border.col = "#7fd3cd") +
+  tm_shape(co_buffer_l_extra) +
+  tm_polygons(lwd = 1.5, col = "#00a99d", border.col = "#00a99d")
+
+
+pm_buffer_l <- rbind(regional_buffer_lower_by_criteria$pm,
+                     urban_buffer_lower_by_criteria$pm,
+                     neighborhood_buffer_lower_by_criteria$pm,
+                     middle_buffer_lower_by_criteria$pm,
+                     micro_buffer_lower_by_criteria$pm)
+pm_buffer_u <- rbind(regional_buffer_upper_by_criteria$pm,
+                     urban_buffer_upper_by_criteria$pm,
+                     neighborhood_buffer_upper_by_criteria$pm,
+                     middle_buffer_upper_by_criteria$pm,
+                     micro_buffer_upper_by_criteria$pm)
+pm_buffer_u_extra <- rbind(neighborhood_buffer_upper_by_criteria$pm,
+                           middle_buffer_upper_by_criteria$pm,
+                           micro_buffer_upper_by_criteria$pm)
+pm_buffer_l_extra <- rbind(neighborhood_buffer_lower_by_criteria$pm,
+                           middle_buffer_lower_by_criteria$pm,
+                           micro_buffer_lower_by_criteria$pm)
+pm_map <- tm_shape(us_states) +
+  tm_polygons(col = "gray95", lwd = 0.5) +
+  tm_shape(pm_buffer_u) +
+  tm_polygons(col = "#90d9b8", lwd = 0, alpha = 0.4) +
+  tm_shape(pm_buffer_l) +
+  tm_polygons(lwd = 0, alpha = 0.4, col = "#22b573") +
+  tm_shape(pm_buffer_u_extra) +
+  tm_polygons(lwd = 1.5, col = "#90d9b8", border.col = "#90d9b8") +
+  tm_shape(pm_buffer_l_extra) +
+  tm_polygons(lwd = 1.5, col = "#22b573", border.col = "#22b573")
+
+
+pb_buffer_u <- rbind(regional_buffer_upper_by_criteria$pb,
+                     urban_buffer_upper_by_criteria$pb,
+                     neighborhood_buffer_upper_by_criteria$pb,
+                     middle_buffer_upper_by_criteria$pb,
+                     micro_buffer_upper_by_criteria$pb)
+pb_buffer_l <- rbind(regional_buffer_lower_by_criteria$pb,
+                     urban_buffer_lower_by_criteria$pb,
+                     neighborhood_buffer_lower_by_criteria$pb,
+                     middle_buffer_lower_by_criteria$pb,
+                     micro_buffer_lower_by_criteria$pb)
+pb_buffer_u_extra <- rbind(neighborhood_buffer_upper_by_criteria$pb,
+                            middle_buffer_upper_by_criteria$pb,
+                            micro_buffer_upper_by_criteria$pb)
+pb_buffer_l_extra <- rbind(neighborhood_buffer_lower_by_criteria$pb,
+                            middle_buffer_lower_by_criteria$pb,
+                            micro_buffer_lower_by_criteria$pb)
+
+pb_buffer_u_ca <- pb_buffer_u[which(pb_buffer_u$State.Code == "06"), ]
+pb_buffer_l_ca <- pb_buffer_l[which(pb_buffer_l$State.Code == "06"), ]
+
+table(pb_buffer_u$Measurement.Scale)
+
+# note, there are no regional-scale pb monitors
+pb_map <- tm_shape(us_states) +
+  tm_polygons(col = "gray95", alpha = 0.10, lwd = 0.5) + 
+  tm_shape(pb_buffer_u) +
+  tm_polygons(col = "#df9295", lwd = 0, alpha = 0.95) +
+  tm_shape(pb_buffer_l) +
+  tm_polygons(lwd = 0, alpha = 0.95, col = "#c1272d") +
+  tm_shape(pb_buffer_u_extra) +
+  tm_polygons(lwd = 1.5, col = "#df9295", border.col = "#df9295") +
+  tm_shape(pb_buffer_l_extra) +
+  tm_polygons(lwd = 1.5, col = "#c1272d", border.col = "#c1272d")
+
+
+tmap_arrange(pm_map, o3_map, no2_map, 
+             so2_map, co_map, pb_map, 
+             ncol = 2, nrow = 3)
+
+```
+
+
+
+
