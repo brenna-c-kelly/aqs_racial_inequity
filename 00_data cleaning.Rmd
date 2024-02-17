@@ -221,6 +221,7 @@ names(acs_data) <- tolower(names(acs_data))
   
 write.csv(acs_data, "data/acs_data.csv", row.names = FALSE)
 
+
 ```
 
 # population centers
@@ -314,19 +315,19 @@ We only really need the block group FIPS code, but we'll select a few more varia
 
 centroids <- st_transform(centroids, st_crs(mons))
 
-table(mons$Measurement.Scale, mons$criteria)
-tm_shape(us_states) +
-  tm_polygons() +
-  tm_shape(centroids) +
-  tm_dots(col = "black") +
-  tm_shape(micro_buffer_upper_by_criteria$pm) +
-  tm_polygons(col = "red", alpha = 0.5)
-
-tm_shape(micro_buffer_upper_by_criteria$pm[12, ]) +
-  tm_polygons(col = "red", alpha = 0.5, lwd = 10) +
-  
-  tm_shape(centroids) +
-  tm_dots(col = "black")
+# table(mons$Measurement.Scale, mons$criteria)
+# tm_shape(us_states) +
+#   tm_polygons() +
+#   tm_shape(centroids) +
+#   tm_dots(col = "black") +
+#   tm_shape(micro_buffer_upper_by_criteria$pm) +
+#   tm_polygons(col = "red", alpha = 0.5)
+# 
+# tm_shape(micro_buffer_upper_by_criteria$pm[12, ]) +
+#   tm_polygons(col = "red", alpha = 0.5, lwd = 10) +
+#   
+#   tm_shape(centroids) +
+#   tm_dots(col = "black")
 
 # PM
 measured_bgc_micro_pm_upper <- st_join(centroids, micro_buffer_upper_by_criteria$pm, join = st_within) |>
@@ -434,7 +435,7 @@ measured_bgc_regional_so2_lower <- st_join(centroids, regional_buffer_lower_by_c
 
 # NO2
 
-table(is.na(measured_bgc_micro_no2_upper$criteria))
+
 measured_bgc_micro_no2_upper <- st_join(centroids, micro_buffer_upper_by_criteria$no2, join = st_within) |>
   filter(!is.na(criteria)) |>
   select(geoid, Measurement.Scale, 
@@ -677,58 +678,136 @@ tm_shape(measured_bgc_regional_o3_upper) +
 
 ```{r}
 
-
 measured_pm_upper <- rbind(measured_bgc_micro_pm_upper, measured_bgc_middle_pm_upper, 
                            measured_bgc_neighborhood_pm_upper, measured_bgc_urban_pm_upper,
-                           measured_bgc_regional_pm_upper) |>
-  filter(!duplicated(geoid))
+                           measured_bgc_regional_pm_upper)## |>
+  ##count(geoid)
+  #filter(!duplicated(geoid))
 measured_pm_lower <- rbind(measured_bgc_micro_pm_lower, measured_bgc_middle_pm_lower,
                            measured_bgc_neighborhood_pm_lower, measured_bgc_urban_pm_lower,
-                           measured_bgc_regional_pm_lower) |>
-  filter(!duplicated(geoid))
+                           measured_bgc_regional_pm_lower)## |>
+  #filter(!duplicated(geoid))
 
 measured_so2_upper <- rbind(measured_bgc_micro_so2_upper, measured_bgc_middle_so2_upper, 
                            measured_bgc_neighborhood_so2_upper, measured_bgc_urban_so2_upper,
-                           measured_bgc_regional_so2_upper) |>
-  filter(!duplicated(geoid))
+                           measured_bgc_regional_so2_upper)## |>
+  #filter(!duplicated(geoid))
 measured_so2_lower <- rbind(measured_bgc_micro_so2_lower, measured_bgc_middle_so2_lower,
                            measured_bgc_neighborhood_so2_lower, measured_bgc_urban_so2_lower,
-                           measured_bgc_regional_so2_lower) |>
-  filter(!duplicated(geoid))
+                           measured_bgc_regional_so2_lower)## |>
+  #filter(!duplicated(geoid))
 
 measured_no2_upper <- rbind(measured_bgc_micro_no2_upper, measured_bgc_middle_no2_upper, 
                            measured_bgc_neighborhood_no2_upper, measured_bgc_urban_no2_upper,
-                           measured_bgc_regional_no2_upper) |>
-  filter(!duplicated(geoid))
+                           measured_bgc_regional_no2_upper)## |>
+  #filter(!duplicated(geoid))
 measured_no2_lower <- rbind(measured_bgc_micro_no2_lower, measured_bgc_middle_no2_lower,
                            measured_bgc_neighborhood_no2_lower, measured_bgc_urban_no2_lower,
-                           measured_bgc_regional_no2_lower) |>
-  filter(!duplicated(geoid))
+                           measured_bgc_regional_no2_lower)## |>
+  #filter(!duplicated(geoid))
 
 measured_co_upper <- rbind(measured_bgc_micro_co_upper, measured_bgc_middle_co_upper, 
                            measured_bgc_neighborhood_co_upper, measured_bgc_urban_co_upper,
-                           measured_bgc_regional_co_upper) |>
-  filter(!duplicated(geoid))
+                           measured_bgc_regional_co_upper)## |>
+  #filter(!duplicated(geoid))
 measured_co_lower <- rbind(measured_bgc_micro_co_lower, measured_bgc_middle_co_lower,
                            measured_bgc_neighborhood_co_lower, measured_bgc_urban_co_lower,
-                           measured_bgc_regional_co_lower) |>
-  filter(!duplicated(geoid))
+                           measured_bgc_regional_co_lower)## |>
+  #filter(!duplicated(geoid))
 
 measured_o3_upper <- rbind(measured_bgc_micro_o3_upper, measured_bgc_middle_o3_upper, 
                            measured_bgc_neighborhood_o3_upper, measured_bgc_urban_o3_upper,
-                           measured_bgc_regional_o3_upper) |>
-  filter(!duplicated(geoid))
+                           measured_bgc_regional_o3_upper)## |>
+  #filter(!duplicated(geoid))
 measured_o3_lower <- rbind(measured_bgc_micro_o3_lower, measured_bgc_middle_o3_lower,
                            measured_bgc_neighborhood_o3_lower, measured_bgc_urban_o3_lower,
-                           measured_bgc_regional_o3_lower) |>
-  filter(!duplicated(geoid))
+                           measured_bgc_regional_o3_lower)# #|>
+  #filter(!duplicated(geoid))
 
 measured_pb_upper <- rbind(measured_bgc_micro_pb_upper, measured_bgc_middle_pb_upper, 
-                           measured_bgc_neighborhood_pb_upper, measured_bgc_urban_pb_upper) |>
-  filter(!duplicated(geoid))
+                           measured_bgc_neighborhood_pb_upper, measured_bgc_urban_pb_upper)## |>
+  #filter(!duplicated(geoid))
 measured_pb_lower <- rbind(measured_bgc_micro_pb_lower, measured_bgc_middle_pb_lower,
-                           measured_bgc_neighborhood_pb_lower, measured_bgc_urban_pb_lower) |>
-  filter(!duplicated(geoid))
+                           measured_bgc_neighborhood_pb_lower, measured_bgc_urban_pb_lower)## |>
+  #filter(!duplicated(geoid))
+
+
+```
+
+
+```{r buffer counts}
+
+count_pm_upper <- data.frame(t(table(measured_pm_upper$geoid)))[, 2:3] |>
+  rename("geoid" = Var2) |>
+  rename("n_upper_pm" = Freq)
+count_pm_lower <- data.frame(t(table(measured_pm_lower$geoid)))[, 2:3] |>
+  rename("geoid" = Var2) |>
+  rename("n_lower_pm" = Freq)
+count_pm <- merge(count_pm_upper, count_pm_lower, by = "geoid", all = TRUE)
+
+count_no2_upper <- data.frame(t(table(measured_no2_upper$geoid)))[, 2:3] |>
+  rename("geoid" = Var2) |>
+  rename("n_upper_no2" = Freq)
+count_no2_lower <- data.frame(t(table(measured_no2_lower$geoid)))[, 2:3] |>
+  rename("geoid" = Var2) |>
+  rename("n_lower_no2" = Freq)
+count_no2 <- merge(count_no2_upper, count_no2_lower, by = "geoid", all = TRUE)
+
+count_so2_upper <- data.frame(t(table(measured_so2_upper$geoid)))[, 2:3] |>
+  rename("geoid" = Var2) |>
+  rename("n_upper_so2" = Freq)
+count_so2_lower <- data.frame(t(table(measured_so2_lower$geoid)))[, 2:3] |>
+  rename("geoid" = Var2) |>
+  rename("n_lower_so2" = Freq)
+count_so2 <- merge(count_so2_upper, count_so2_lower, by = "geoid", all = TRUE)
+
+count_co_upper <- data.frame(t(table(measured_co_upper$geoid)))[, 2:3] |>
+  rename("geoid" = Var2) |>
+  rename("n_upper_co" = Freq)
+count_co_lower <- data.frame(t(table(measured_co_lower$geoid)))[, 2:3] |>
+  rename("geoid" = Var2) |>
+  rename("n_lower_co" = Freq)
+count_co <- merge(count_co_upper, count_co_lower, by = "geoid", all = TRUE)
+
+count_o3_upper <- data.frame(t(table(measured_o3_upper$geoid)))[, 2:3] |>
+  rename("geoid" = Var2) |>
+  rename("n_upper_o3" = Freq)
+count_o3_lower <- data.frame(t(table(measured_o3_lower$geoid)))[, 2:3] |>
+  rename("geoid" = Var2) |>
+  rename("n_lower_o3" = Freq)
+count_o3 <- merge(count_o3_upper, count_o3_lower, by = "geoid", all = TRUE)
+
+count_pb_upper <- data.frame(t(table(measured_pb_upper$geoid)))[, 2:3] |>
+  rename("geoid" = Var2) |>
+  rename("n_upper_pb" = Freq)
+count_pb_lower <- data.frame(t(table(measured_pb_lower$geoid)))[, 2:3] |>
+  rename("geoid" = Var2) |>
+  rename("n_lower_pb" = Freq)
+count_pb <- merge(count_pb_upper, count_pb_lower, by = "geoid", all = TRUE)
+
+```
+
+```{r}
+
+acs_merge <- acs_data |>
+  merge(count_pm, by = "geoid", all.x = TRUE) |>
+  merge(count_no2, by = "geoid", all.x = TRUE) |>
+  merge(count_so2, by = "geoid", all.x = TRUE) |>
+  merge(count_co, by = "geoid", all.x = TRUE) |>
+  merge(count_o3, by = "geoid", all.x = TRUE) |>
+  merge(count_pb, by = "geoid", all.x = TRUE) |>
+  mutate(n_lower_pb = ifelse(is.na(n_lower_pb), 0, n_lower_pb)) |>
+  mutate(n_upper_pb = ifelse(is.na(n_upper_pb), 0, n_upper_pb)) |>
+  mutate(n_lower_no2 = ifelse(is.na(n_lower_no2), 0, n_lower_no2)) |>
+  mutate(n_upper_no2 = ifelse(is.na(n_upper_no2), 0, n_upper_no2)) |>
+  mutate(n_lower_so2 = ifelse(is.na(n_lower_so2), 0, n_lower_so2)) |>
+  mutate(n_upper_so2 = ifelse(is.na(n_upper_so2), 0, n_upper_so2)) |>
+  mutate(n_lower_pm = ifelse(is.na(n_lower_pm), 0, n_lower_pm)) |>
+  mutate(n_upper_pm = ifelse(is.na(n_upper_pm), 0, n_upper_pm)) |>
+  mutate(n_lower_co = ifelse(is.na(n_lower_co), 0, n_lower_co)) |>
+  mutate(n_upper_co = ifelse(is.na(n_upper_co), 0, n_upper_co)) |>
+  mutate(n_lower_o3 = ifelse(is.na(n_lower_o3), 0, n_lower_o3)) |>
+  mutate(n_upper_o3 = ifelse(is.na(n_upper_o3), 0, n_upper_o3))
 
 
 ```
@@ -848,11 +927,11 @@ summary(acs_merge)
 ```{r}
 
 acs_wo_geom <- st_drop_geometry(acs_merge)
-acs_geom <- acs_merge |>
-  select(geoid, geometry)
+# acs_geom <- acs_merge |>
+#   select(geoid, geometry)
 
-write.csv(acs_wo_geom, "data/7020_data.csv", row.names = FALSE)
-st_write(acs_geom, "data/7020_geom.shp", append = TRUE)
+write.csv(acs_wo_geom, "data/7020_data_count.csv", row.names = FALSE)
+# st_write(acs_geom, "data/7020_geom.shp", append = TRUE)
 
 ```
 

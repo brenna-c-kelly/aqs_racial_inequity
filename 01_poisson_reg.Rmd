@@ -30,20 +30,23 @@ library(regclass)
 
 ```{r}
 
-acs <- read.csv("data/7020_data_count.csv")
-acs$geoid <- str_pad(acs$geoid, width = 12, pad = "0", side = "left")
+acs <- acs_merge
 
-acs_geom <- st_read("data/7020_geom.shp")
+# acs <- read.csv("data/7020_data.csv")
 
-# merge by geoid
-acs <- merge(acs_geom, acs, by = "geoid")
+# acs$geoid <- str_pad(acs$geoid, width = 12, pad = "0", side = "left")
+
+# acs_geom <- st_read("data/7020_geom.shp")
+# 
+# # merge by geoid
+# acs <- merge(acs_geom, acs, by = "geoid")
 
 # drop empty geometries
-acs <- acs[which(st_is_empty(acs) == FALSE), ]
-
-# drop areas with no population
-empty_areas <- acs[which(is.na(acs$hisp_p)), ]
-acs <- acs[which(!acs$geoid %in% empty_areas$geoid), ]
+# acs <- acs[which(st_is_empty(acs) == FALSE), ]
+# 
+# # drop areas with no population
+# empty_areas <- acs[which(is.na(acs$hisp_p)), ]
+# acs <- acs[which(!acs$geoid %in% empty_areas$geoid), ]
 
 # fix poverty (some have 0)
 acs$pov_p <- ifelse(is.na(acs$pov_p), 0 , acs$pov_p)
@@ -71,8 +74,22 @@ acs <- acs |>
 
 acs$state <- str_sub(acs$geoid, start = 0, end = 2)
 
+acs$total_centered <- acs$total_1k - mean(acs$total_1k)
+acs$total_1k_log <- log(acs$total_1k)
+
 # write.csv(acs, "acs_inla.csv", row.names = FALSE)
 
+```
+
+
+```{r}
+summary(inla(n_upper_no2 ~ total_1k_log,# + 
+             #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
+             #f(idarea_2, model = "iid"), 
+             data = acs, family = "poisson",
+             control.inla= list(int.strategy = "eb"),
+             control.compute = list(dic = TRUE, waic = TRUE),
+             control.predictor = list(compute = TRUE)))
 ```
 
 
@@ -353,274 +370,141 @@ not looping because... ugh
 
 ## running 12 inla models (one for each pollutant-scale) and saving them into a list; the saving the list to an rds file
 
-inla_results <- list()
+inla_results_pois <- list()
 
-system.time(
-  test <- inla(co_measured_l ~ hisp_p_log + black_p_log + 
-                 aian_p_log + asian_p_log + nhpi_p_log + 
-                 other_p_log + tom_p_log + #offset(total_1k) + 
-                 f(idarea, model = "bym2", graph = g) +
-                 f(idarea_2, model = "iid"),  
-               data = acs, family = "binomial",
-               control.inla= list(int.strategy = "eb"),
-               control.compute = list(dic = TRUE, waic = TRUE),
-               control.predictor = list(compute = TRUE))
-)
+inla_results_pois
+saveRDS(inla_results_pois, file = "data/inla_results_pois.rds")
+test <- readRDS("data/inla_results_pois.rds")
 
 
-inla_results[["inla_co_l"]] <- inla(co_measured_l ~ 1,#hisp_p_log + black_p_log + 
-                                      #aian_p_log + asian_p_log + nhpi_p_log + 
-                                      #other_p_log + tom_p_log + total_1k,# + 
-                                      #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
-                                      #f(idarea_2, model = "iid"), 
-                                    data = acs, family = "binomial",
-                                    control.inla= list(int.strategy = "eb"),
-                                    control.compute = list(dic = TRUE, waic = TRUE),
-                                    control.predictor = list(compute = TRUE))
-inla_results[["inla_co_u"]] <- inla(co_measured_u ~ hisp_p_log + black_p_log + 
+
+inla_results_pois[["inla_co_l"]] <- inla(n_lower_co ~ hisp_p_log + black_p_log + 
                                       aian_p_log + asian_p_log + nhpi_p_log + 
                                       other_p_log + tom_p_log + total_1k,# + 
                                       #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
                                       #f(idarea_2, model = "iid"), 
-                                    data = acs, family = "binomial",
+                                    data = acs, family = "poisson",
+                                    control.inla= list(int.strategy = "eb"),
+                                    control.compute = list(dic = TRUE, waic = TRUE),
+                                    control.predictor = list(compute = TRUE))
+inla_results_pois[["inla_co_u"]] <- inla(n_upper_co ~ hisp_p_log + black_p_log + 
+                                      aian_p_log + asian_p_log + nhpi_p_log + 
+                                      other_p_log + tom_p_log + total_1k,# + 
+                                      #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
+                                      #f(idarea_2, model = "iid"), 
+                                    data = acs, family = "poisson",
                                     control.inla= list(int.strategy = "eb"),
                                     control.compute = list(dic = TRUE, waic = TRUE),
                                     control.predictor = list(compute = TRUE))
 
-inla_results[["inla_no2_l"]] <- inla(no2_measured_l ~ hisp_p_log + black_p_log + 
+inla_results_pois[["inla_no2_l"]] <- inla(n_lower_no2 ~ hisp_p_log + black_p_log + 
                                       aian_p_log + asian_p_log + nhpi_p_log + 
                                       other_p_log + tom_p_log + total_1k,# + 
                                       #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
                                       #f(idarea_2, model = "iid"), 
-                                     data = acs, family = "binomial",
+                                     data = acs, family = "poisson",
                                      control.inla= list(int.strategy = "eb"),
                                      control.compute = list(dic = TRUE, waic = TRUE),
                                      control.predictor = list(compute = TRUE))
-inla_results[["inla_no2_u"]] <- inla(no2_measured_u ~ hisp_p_log + black_p_log + 
+inla_results_pois[["inla_no2_u"]] <- inla(n_upper_no2 ~ hisp_p_log + black_p_log + 
                                       aian_p_log + asian_p_log + nhpi_p_log + 
                                       other_p_log + tom_p_log + total_1k,# + 
                                       #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
                                       #f(idarea_2, model = "iid"), 
-                                     data = acs, family = "binomial",
+                                     data = acs, family = "poisson",
                                      control.inla= list(int.strategy = "eb"),
                                      control.compute = list(dic = TRUE, waic = TRUE),
                                      control.predictor = list(compute = TRUE))
 
-inla_results[["inla_pm_l"]] <- inla(pm_measured_l ~ hisp_p_log + black_p_log + 
+inla_results_pois[["inla_pm_l"]] <- inla(n_lower_pm ~ hisp_p_log + black_p_log + 
                                       aian_p_log + asian_p_log + nhpi_p_log + 
                                       other_p_log + tom_p_log + total_1k,# + 
                                       #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
                                       #f(idarea_2, model = "iid"),   
-                                    data = acs, family = "binomial",
+                                    data = acs, family = "poisson",
                                     control.inla= list(int.strategy = "eb"),
                                     control.compute = list(dic = TRUE, waic = TRUE),
                                     control.predictor = list(compute = TRUE))
-inla_results[["inla_pm_u"]] <- inla(pm_measured_u ~ hisp_p_log + black_p_log + 
+inla_results_pois[["inla_pm_u"]] <- inla(n_upper_pm ~ hisp_p_log + black_p_log + 
                                       aian_p_log + asian_p_log + nhpi_p_log + 
                                       other_p_log + tom_p_log + total_1k,# + 
                                       #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
                                       #f(idarea_2, model = "iid"), 
-                                    data = acs, family = "binomial",
+                                    data = acs, family = "poisson",
                                     control.inla= list(int.strategy = "eb"),
                                     control.compute = list(dic = TRUE, waic = TRUE),
                                     control.predictor = list(compute = TRUE))
 
-
-acs$total_centered <- acs$total_1k - mean(acs$total_1k)
-acs$total_1k_log <- log(acs$total_1k)
-
-
-
-inla_results[["inla_pb_l"]] <- inla(pb_measured_l ~ (hisp_p_log + black_p_log + 
+inla_results_pois[["inla_pb_l"]] <- inla(n_lower_pb ~ hisp_p_log + black_p_log + 
                                       aian_p_log + asian_p_log + nhpi_p_log + 
-                                      other_p_log + tom_p_log)* total_1k_log,# + 
+                                      other_p_log + tom_p_log + total_1k_log,# + 
                                       #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
                                       #f(idarea_2, model = "iid"), 
-                                    data = acs, family = "binomial",
+                                    data = acs, family = "poisson",
                                     control.inla= list(int.strategy = "eb"),
                                     control.compute = list(dic = TRUE, waic = TRUE),
                                     control.predictor = list(compute = TRUE))
-inla_results[["inla_pb_u"]] <- inla(pb_measured_u ~ hisp_p_log + black_p_log + 
-                                      aian_p_log + asian_p_log + nhpi_p_log + 
-                                      other_p_log + tom_p_log + offset(total_1k),# + 
-                                      #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
-                                      #f(idarea_2, model = "iid"), 
-                                    data = acs, family = "binomial",
-                                    control.inla= list(int.strategy = "eb"),
-                                    control.compute = list(dic = TRUE, waic = TRUE),
-                                    control.predictor = list(compute = TRUE))
-
-summary(acs$pb_measured_u)
-str(inla_results$inla_pb_u$offset.linear.predictor)
-
-test <- cbind(acs, inla_results$inla_pb_u$offset.linear.predictor)
-
-tm_shape(test, proj = aea) +
-  tm_polygons(col = "inla_results.inla_pb_u.offset.linear.predictor", lwd = 0, style = "cont")
-
-inla_results[["inla_so2_l"]] <- inla(so2_measured_l ~ hisp_p_log + black_p_log + 
+inla_results_pois[["inla_pb_u"]] <- inla(n_upper_pb ~ hisp_p_log + black_p_log + 
                                       aian_p_log + asian_p_log + nhpi_p_log + 
                                       other_p_log + tom_p_log + total_1k,# + 
                                       #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
                                       #f(idarea_2, model = "iid"), 
-                                     data = acs, family = "binomial",
+                                    data = acs, family = "poisson",
+                                    control.inla= list(int.strategy = "eb"),
+                                    control.compute = list(dic = TRUE, waic = TRUE),
+                                    control.predictor = list(compute = TRUE))
+
+inla_results_pois[["inla_so2_l"]] <- inla(n_lower_so2 ~ hisp_p_log + black_p_log + 
+                                      aian_p_log + asian_p_log + nhpi_p_log + 
+                                      other_p_log + tom_p_log + total_1k,# + 
+                                      #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
+                                      #f(idarea_2, model = "iid"), 
+                                     data = acs, family = "poisson",
                                      control.inla= list(int.strategy = "eb"),
                                      control.compute = list(dic = TRUE, waic = TRUE),
                                      control.predictor = list(compute = TRUE))
-inla_results[["inla_so2_u"]] <- inla(so2_measured_u ~ hisp_p_log + black_p_log + 
+inla_results_pois[["inla_so2_u"]] <- inla(n_upper_so2 ~ hisp_p_log + black_p_log + 
                                       aian_p_log + asian_p_log + nhpi_p_log + 
                                       other_p_log + tom_p_log + total_1k,# + 
                                       #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
                                       #f(idarea_2, model = "iid"), 
-                                     data = acs, family = "binomial",
+                                     data = acs, family = "poisson",
                                      control.inla= list(int.strategy = "eb"),
                                      control.compute = list(dic = TRUE, waic = TRUE),
                                      control.predictor = list(compute = TRUE))
 
-inla_results[["inla_o3_l"]] <- inla(o3_measured_l ~ hisp_p_log + black_p_log + 
+inla_results_pois[["inla_o3_l"]] <- inla(n_lower_o3 ~ hisp_p_log + black_p_log + 
                                       aian_p_log + asian_p_log + nhpi_p_log + 
-                                      other_p_log + tom_p_log + total_1k,# + 
+                                      other_p_log + tom_p_log + total_1k_log,# + offset(total_1k),# + 
                                       #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
                                       #f(idarea_2, model = "iid"),  
-                                    data = acs, family = "binomial",
+                                    data = acs, family = "poisson",
                                     control.inla= list(int.strategy = "eb"),
                                     control.compute = list(dic = TRUE, waic = TRUE),
                                     control.predictor = list(compute = TRUE))
-inla_results[["inla_o3_u"]] <- inla(o3_measured_u ~ hisp_p_log + black_p_log + 
+inla_results_pois[["inla_o3_u"]] <- inla(n_upper_o3 ~ hisp_p_log + black_p_log + 
                                       aian_p_log + asian_p_log + nhpi_p_log + 
-                                      other_p_log + tom_p_log + total_1k,# + 
+                                      other_p_log + tom_p_log + total_1k_log,# + offset(total_1k),# + 
                                       #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
                                       #f(idarea_2, model = "iid"), 
-                                    data = acs, family = "binomial",
+                                    data = acs, family = "poisson",
                                     control.inla= list(int.strategy = "eb"),
                                     control.compute = list(dic = TRUE, waic = TRUE),
                                     control.predictor = list(compute = TRUE))
 
+VIF(glm(n_upper_o3 ~ hisp_p_log + black_p_log + 
+          aian_p_log + asian_p_log + nhpi_p_log + 
+          other_p_log + tom_p_log + total_1k_log, data = acs, family = "poisson"))
+# VIF is very low
 
-saveRDS(inla_results, file = "data/inla_results.rds")
-
-
-vars <- c("pb_measured_u"), "pb_measured_l", 
-          "pm_measured_u", "pm_measured_l", 
-          "no2_measured_u", "no2_measured_l",
-          "so2_measured_u", "so2_measured_l",
-          "o3_measured_u", "o3_measured_l",
-          "co_measured_u", "co_measured_l")
-
-system.time(
-  
-  test <- inla(co_measured_u ~ hisp_p_log + black_p_log + aian_p_log + 
-                    asian_p_log + nhpi_p_log + other_p_log + tom_p_log + offset(total_1k) + 
-                    f(idarea, model = "iid", graph = g), 
-                  data = acs, family = "binomial",
-                  control.inla= list(int.strategy = "eb"),
-                  control.compute = list(dic = TRUE, waic = TRUE),
-                  control.predictor = list(compute = TRUE))
-  
-)
-
-acs_id <- acs[which(acs$state %in% c("45", "12")), ]
-nb_id <- poly2nb(acs_id)
-nb2INLA("map_id.adj", nb_id)
-g_id <- inla.read.graph(filename = "map_id.adj")
-
-acs_id$idarea <- 1:nrow(acs_id)
-acs_id$idarea_2 <- 1:nrow(acs_id)
-
-system.time(test <- inla(co_measured_l ~ hisp_p_log + black_p_log + aian_p_log + 
-                           asian_p_log + nhpi_p_log + other_p_log + tom_p_log + offset(total_1k) + 
-                           f(idarea, model = "besag", graph = g, scale.model = TRUE) +
-                           f(idarea_2, model = "iid"), 
-                         data = acs, family = "binomial",
-                         control.inla= list(int.strategy = "eb"),
-                         control.compute = list(dic = TRUE, waic = TRUE),
-                         control.predictor = list(compute = TRUE)))
-
-test <- inla(co_measured_l ~ hisp_p_log + black_p_log + aian_p_log + 
-               asian_p_log + nhpi_p_log + other_p_log + tom_p_log + offset(total_1k) + 
-               f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
-               f(idarea_2, model = "iid"), 
-             data = acs_id, family = "binomial",
-             control.inla= list(int.strategy = "eb"),
-             control.compute = list(dic = TRUE, waic = TRUE),
-                 control.predictor = list(compute = TRUE))
-summary(test)
-
-inla_results[[1]] <- inla_o3_u
-
-summary(inla_o3_u)
-
-saveRDS(inla_results, file = "data/inla_results.rds")
-
-inla_pm_u$summary.fixed
-data.frame(inla_pm_u$summary.fixed[, 1],
-           exp(inla_pm_u$summary.fixed[, c(2, 4:6)]))
-
-summary(inla_o3_l)
-exp(inla_o3_u$summary.fixed)
-exp(inla_o3_l$summary.fixed)
-
-o3_u <- inla_o3_u$summary.fixed
-o3_u$scale <- "upper"
-o3_l <- inla_o3_l$summary.fixed
-o3_l$scale <- "lower"
-
-o3_res <- rbind(o3_l, o3_u)
-res <- o3_res
 
 ```
 
-
-## inla function, loop
 
 ```{r}
 
-inla_fx <- function(x) {
-
-  inla_res <- inla(x ~ hisp_p_log + black_p_log + aian_p_log + 
-                        asian_p_log + nhpi_p_log + other_p_log + tom_p_log + 
-                        offset(total_1k),# + 
-                        #f(idarea, model = "bym2", graph = g), 
-                      data = acs, family = "binomial",
-                      control.inla= list(int.strategy = "eb"),
-                      control.compute = list(dic = TRUE, waic = TRUE),
-                      control.predictor = list(compute = TRUE))
-  inla_res
-}
-
-
-vars <- c("pb_measured_u"), "pb_measured_l", 
-          "pm_measured_u", "pm_measured_l", 
-          "no2_measured_u", "no2_measured_l",
-          "so2_measured_u", "so2_measured_l",
-          "o3_measured_u", "o3_measured_l",
-          "co_measured_u", "co_measured_l")
-
-
-
-for(i in 1:length(vars)) {
-  
-  inla_results[[i]] <- inla_fx(vars[i])
-  
-}
-saveRDS(inla_results, file = "data/inla_results.rds")
-
-
-inla_results <- readRDS("data/inla_results.rds")
-
-round(exp(inla_results$inla_o3_u$summary.fixed), 2)
-
-```
-
-
-## forest plots
-
-```{r ozone}
-# extract model results
-
-## O3
-res_lower <- inla_results$inla_o3_l$summary.fixed
-res_upper <- inla_results$inla_o3_u$summary.fixed
+res_lower <- inla_results_pois$inla_o3_l$summary.fixed
+res_upper <- inla_results_pois$inla_o3_u$summary.fixed
 res_lower$label <- "lower"
 res_upper$label <- "upper"
 
@@ -644,7 +528,6 @@ res$label <- ifelse(grepl("1", res$variable) == TRUE, paste0(res$label, ", upper
 res$scale <- ifelse(grepl("1", res$variable) == TRUE, "upper",
                     "lower")
 
-
 res$mean <- round(exp(res$mean), 3)
 res$`0.025quant` <- round(exp(res$`0.025quant`), 3)
 res$`0.975quant` <- round(exp(res$`0.975quant`), 3)
@@ -665,7 +548,7 @@ res |>
   scale_color_manual(values = c("#ff2908","#f78e75")) +
   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
   labs(x = "Odds of having O3 monitor (log scale)") +
-  coord_cartesian(xlim = c(0.65, 1.25)) +
+  coord_cartesian(xlim = c(0.8, 1.1)) +
   geom_vline(xintercept = 1, linetype = "solid") +
   geom_vline(xintercept = c(0.8, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
   scale_x_continuous(trans = 'log10') +
@@ -674,13 +557,14 @@ res |>
         axis.text.y = element_blank(),
         axis.title.y = element_blank()) + 
   geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
-  geom_text(aes(x = 0.65, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+  geom_text(aes(x = 0.8, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
 
 ```
 
+
 ```{r pm}
-res_lower <- inla_results$inla_pm_l$summary.fixed
-res_upper <- inla_results$inla_pm_u$summary.fixed
+res_lower <- inla_results_pois$inla_pm_l$summary.fixed
+res_upper <- inla_results_pois$inla_pm_u$summary.fixed
 res_lower$label <- "lower"
 res_upper$label <- "upper"
 
@@ -725,7 +609,7 @@ res |>
   scale_color_manual(values = c("#22b573", "#90d9b8")) +
   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
   labs(x = "Odds of having O3 monitor (log scale)") +
-  coord_cartesian(xlim = c(0.65, 1.25)) +
+  coord_cartesian(xlim = c(0.8, 1.1)) +
   geom_vline(xintercept = 1, linetype = "solid") +
   geom_vline(xintercept = c(0.8, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
   scale_x_continuous(trans = 'log10') +
@@ -734,13 +618,13 @@ res |>
         axis.text.y = element_blank(),
         axis.title.y = element_blank()) + 
   geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
-  geom_text(aes(x = 0.65, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+  geom_text(aes(x = 0.8, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
 
 ```
 
 ```{r no2}
-res_lower <- inla_results$inla_no2_l$summary.fixed
-res_upper <- inla_results$inla_no2_u$summary.fixed
+res_lower <- inla_results_pois$inla_no2_l$summary.fixed
+res_upper <- inla_results_pois$inla_no2_u$summary.fixed
 res_lower$label <- "lower"
 res_upper$label <- "upper"
 
@@ -784,7 +668,7 @@ res |>
   scale_color_manual(values = c("#9e005d", "#ce7fad")) +
   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
   labs(x = "Odds of having O3 monitor (log scale)") +
-  coord_cartesian(xlim = c(0.65, 1.25)) +
+  coord_cartesian(xlim = c(0.8, 1.1)) +
   geom_vline(xintercept = 1, linetype = "solid") +
   geom_vline(xintercept = c(0.8, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
   scale_x_continuous(trans = 'log10') +
@@ -793,13 +677,14 @@ res |>
         axis.text.y = element_blank(),
         axis.title.y = element_blank()) + 
   geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
-  geom_text(aes(x = 0.65, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+  geom_text(aes(x = 0.8, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+
 
 ```
 
 ```{r so2}
-res_lower <- inla_results$inla_so2_l$summary.fixed
-res_upper <- inla_results$inla_so2_u$summary.fixed
+res_lower <- inla_results_pois$inla_so2_l$summary.fixed
+res_upper <- inla_results_pois$inla_so2_u$summary.fixed
 res_lower$label <- "lower"
 res_upper$label <- "upper"
 
@@ -843,7 +728,7 @@ res |>
   scale_color_manual(values = c("#0071bc", "#7fb7dd")) +
   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
   labs(x = "Odds of having O3 monitor (log scale)") +
-  coord_cartesian(xlim = c(0.65, 1.25)) +
+  coord_cartesian(xlim = c(0.8, 1.1)) +
   geom_vline(xintercept = 1, linetype = "solid") +
   geom_vline(xintercept = c(0.8, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
   scale_x_continuous(trans = 'log10') +
@@ -852,14 +737,15 @@ res |>
         axis.text.y = element_blank(),
         axis.title.y = element_blank()) + 
   geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
-  geom_text(aes(x = 0.65, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+  geom_text(aes(x = 0.8, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+
 
 ```
 
 ```{r pb}
 
-res_lower <- inla_results$inla_pb_l$summary.fixed
-res_upper <- inla_results$inla_pb_u$summary.fixed
+res_lower <- inla_results_pois$inla_pb_l$summary.fixed
+res_upper <- inla_results_pois$inla_pb_u$summary.fixed
 res_lower$label <- "lower"
 res_upper$label <- "upper"
 
@@ -903,7 +789,7 @@ res |>
   scale_color_manual(values = c("#c1272d", "#df9295")) +
   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
   labs(x = "Odds of having O3 monitor (log scale)") +
-  coord_cartesian(xlim = c(0.65, 1.25)) +
+  coord_cartesian(xlim = c(0.7, 1.4)) +
   geom_vline(xintercept = 1, linetype = "solid") +
   geom_vline(xintercept = c(0.8, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
   scale_x_continuous(trans = 'log10') +
@@ -912,13 +798,14 @@ res |>
         axis.text.y = element_blank(),
         axis.title.y = element_blank()) + 
   geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
-  geom_text(aes(x = 0.65, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+  geom_text(aes(x = 0.7, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+
 
 ```
 
 ```{r co}
-res_lower <- inla_results$inla_co_l$summary.fixed
-res_upper <- inla_results$inla_co_u$summary.fixed
+res_lower <- inla_results_pois$inla_co_l$summary.fixed
+res_upper <- inla_results_pois$inla_co_u$summary.fixed
 res_lower$label <- "lower"
 res_upper$label <- "upper"
 
@@ -962,7 +849,7 @@ res |>
   scale_color_manual(values = c("#00a99d", "#7fd3cd")) +
   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
   labs(x = "Odds of having O3 monitor (log scale)") +
-  coord_cartesian(xlim = c(0.65, 1.25)) +
+  coord_cartesian(xlim = c(0.8, 1.1)) +
   geom_vline(xintercept = 1, linetype = "solid") +
   geom_vline(xintercept = c(0.8, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
   scale_x_continuous(trans = 'log10') +
@@ -971,250 +858,11 @@ res |>
         axis.text.y = element_blank(),
         axis.title.y = element_blank()) + 
   geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
-  geom_text(aes(x = 0.65, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+  geom_text(aes(x = 0.8, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
 
 ```
 
-```{r}
 
-
-us_states <- get_acs(geography = "state",
-                     variables = c("B03002_001"),
-                     geometry = TRUE,
-                     year = 2021)
-us_states <- st_transform(us_states, aea)
-
-us_states_cont <- us_states |>
-  filter(!NAME %in% c("Alaska", "Hawaii", "Puerto Rico"))
-us_states <- us_states |>
-  filter(NAME == "Alaska")
-ak <- st_transform(ak, 3338)
-hi <- us_states |>
-  filter(NAME == "Hawaii") |>
-  st_transform(990002)
-hi <- st_transform(hi, "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=37.5 +lon_0=-96 +ellps=GRS80 +datum=NAD83")
-
-## o3
-o3_buffer_l <- rbind(regional_buffer_lower_by_criteria$o3,
-                     urban_buffer_lower_by_criteria$o3,
-                     neighborhood_buffer_lower_by_criteria$o3,
-                     middle_buffer_lower_by_criteria$o3,
-                     micro_buffer_lower_by_criteria$o3)
-o3_buffer_u <- rbind(regional_buffer_upper_by_criteria$o3,
-                     urban_buffer_upper_by_criteria$o3,
-                     neighborhood_buffer_upper_by_criteria$o3,
-                     middle_buffer_upper_by_criteria$o3,
-                     micro_buffer_upper_by_criteria$o3)
-o3_buffer_u_extra <- rbind(neighborhood_buffer_upper_by_criteria$o3,
-                            middle_buffer_upper_by_criteria$o3,
-                            micro_buffer_upper_by_criteria$o3)
-o3_buffer_l_extra <- rbind(neighborhood_buffer_lower_by_criteria$o3,
-                            middle_buffer_lower_by_criteria$o3,
-                            micro_buffer_lower_by_criteria$o3)
-o3_map <- tm_shape(us_states) +
-  tm_polygons(col = "gray95", lwd = 0.5) +
-  tm_shape(o3_buffer_u) +
-  tm_polygons(col = "#f78e75", lwd = 0, alpha = 0.4) +
-  tm_shape(o3_buffer_l) +
-  tm_polygons(lwd = 0, alpha = 0.4, col = "#ff2908") +
-  tm_shape(o3_buffer_u_extra) +
-  tm_polygons(lwd = 1.5, col = "#f78e75", border.col = "#f78e75") +
-  tm_shape(o3_buffer_l_extra) +
-  tm_polygons(lwd = 1.5, col = "#ff2908", border.col = "#ff2908")
-
-o3_ak_map <- tm_shape(ak) +
-  tm_polygons(col = "gray95", lwd = 0.5) +
-  tm_shape(o3_buffer_u) +
-  tm_polygons(col = "#f78e75", lwd = 0, alpha = 0.4) +
-  tm_shape(o3_buffer_l) +
-  tm_polygons(lwd = 0, alpha = 0.4, col = "#ff2908")
-tm_shape(hi) +
-  tm_polygons(col = "gray95", lwd = 0.5) +
-  tm_shape(o3_buffer_u) +
-  tm_polygons(col = "#f78e75", lwd = 0, alpha = 0.4) +
-  tm_shape(o3_buffer_l) +
-  tm_polygons(lwd = 0, alpha = 0.4, col = "#ff2908")
-
-
-tm_shape(pm_buffer_u) +
-  tm_polygons(col = "#90d9b8", lwd = 0, alpha = 0.2) +
-  tm_shape(pm_buffer_l) +
-  tm_polygons(lwd = 0, alpha = 0.2, col = "#22b573") +
-  tm_shape(pm_buffer_u_extra) +
-  tm_polygons(lwd = 1.5, col = "#90d9b8", border.col = "#90d9b8") +
-  tm_shape(pm_buffer_l_extra) +
-  tm_polygons(lwd = 1.5, col = "#22b573", border.col = "#22b573") +
-  tm_shape(o3_buffer_u) +
-  tm_polygons(col = "#f78e75", lwd = 0, alpha = 0.2) +
-  tm_shape(o3_buffer_l) +
-  tm_polygons(lwd = 0, alpha = 0.2, col = "#ff2908") +
-  tm_shape(o3_buffer_u_extra) +
-  tm_polygons(lwd = 1.5, col = "#f78e75", border.col = "#f78e75") +
-  tm_shape(o3_buffer_l_extra) +
-  tm_polygons(lwd = 1.5, col = "#ff2908", border.col = "#ff2908")
-
-tmap_arrange(o3_map, o3_ak_map)
-
-aea
-
-## no2
-no2_buffer_u <- rbind(regional_buffer_upper_by_criteria$no2,
-                      urban_buffer_upper_by_criteria$no2,
-                      neighborhood_buffer_upper_by_criteria$no2,
-                      middle_buffer_upper_by_criteria$no2,
-                      micro_buffer_upper_by_criteria$no2)
-no2_buffer_l <- rbind(regional_buffer_lower_by_criteria$no2,
-                      urban_buffer_lower_by_criteria$no2,
-                      neighborhood_buffer_lower_by_criteria$no2,
-                      middle_buffer_lower_by_criteria$no2,
-                      micro_buffer_lower_by_criteria$no2)
-no2_buffer_u_extra <- rbind(neighborhood_buffer_upper_by_criteria$no2,
-                            middle_buffer_upper_by_criteria$no2,
-                            micro_buffer_upper_by_criteria$no2)
-no2_buffer_l_extra <- rbind(neighborhood_buffer_lower_by_criteria$no2,
-                            middle_buffer_lower_by_criteria$no2,
-                            micro_buffer_lower_by_criteria$no2)
-no2_map <- tm_shape(us_states) +
-  tm_polygons(col = "gray95", lwd = 0.5) +
-  tm_shape(no2_buffer_u) +
-  tm_polygons(col = "#ce7fad", lwd = 0, alpha = 0.35) +
-  tm_shape(no2_buffer_l) +
-  tm_polygons(lwd = 0, alpha = 0.35, col = "#9e005d") +
-  tm_shape(no2_buffer_u_extra) +
-  tm_polygons(lwd = 1.5, col = "#ce7fad", border.col = "#ce7fad") +
-  tm_shape(no2_buffer_l_extra) +
-  tm_polygons(lwd = 1.5, col = "#9e005d", border.col = "#9e005d")
-
-
-
-
-## so2
-so2_buffer_u <- rbind(regional_buffer_upper_by_criteria$so2,
-                      urban_buffer_upper_by_criteria$so2,
-                      neighborhood_buffer_upper_by_criteria$so2,
-                      middle_buffer_upper_by_criteria$so2,
-                      micro_buffer_upper_by_criteria$so2)
-so2_buffer_l <- rbind(regional_buffer_lower_by_criteria$so2,
-                      urban_buffer_lower_by_criteria$so2,
-                      neighborhood_buffer_lower_by_criteria$so2,
-                      middle_buffer_lower_by_criteria$so2,
-                      micro_buffer_lower_by_criteria$so2)
-so2_buffer_u_extra <- rbind(neighborhood_buffer_upper_by_criteria$so2,
-                            middle_buffer_upper_by_criteria$so2,
-                            micro_buffer_upper_by_criteria$so2)
-so2_buffer_l_extra <- rbind(neighborhood_buffer_lower_by_criteria$so2,
-                            middle_buffer_lower_by_criteria$so2,
-                            micro_buffer_lower_by_criteria$so2)
-so2_map <- tm_shape(us_states) +
-  tm_polygons(col = "gray95", lwd = 0.5) +
-  tm_shape(so2_buffer_u) +
-  tm_polygons(col = "#7fb7dd", lwd = 0, alpha = 0.5) +
-  tm_shape(so2_buffer_l) +
-  tm_polygons(lwd = 0, alpha = 0.5, col = "#0071bc") +
-  tm_shape(so2_buffer_u_extra) +
-  tm_polygons(lwd = 1.5, col = "#7fb7dd", border.col = "#7fb7dd") +
-  tm_shape(so2_buffer_l_extra) +
-  tm_polygons(lwd = 1.5, col = "#0071bc", border.col = "#0071bc")
-
-
-## co
-co_buffer_u <- rbind(regional_buffer_upper_by_criteria$co,
-                     urban_buffer_upper_by_criteria$co,
-                     neighborhood_buffer_upper_by_criteria$co,
-                     middle_buffer_upper_by_criteria$co,
-                     micro_buffer_upper_by_criteria$co)
-co_buffer_l <- rbind(regional_buffer_lower_by_criteria$co,
-                     urban_buffer_lower_by_criteria$co,
-                     neighborhood_buffer_lower_by_criteria$co,
-                     middle_buffer_lower_by_criteria$co,
-                     micro_buffer_lower_by_criteria$co)
-co_buffer_u_extra <- rbind(neighborhood_buffer_upper_by_criteria$co,
-                            middle_buffer_upper_by_criteria$co,
-                            micro_buffer_upper_by_criteria$co)
-co_buffer_l_extra <- rbind(neighborhood_buffer_lower_by_criteria$co,
-                            middle_buffer_lower_by_criteria$co,
-                            micro_buffer_lower_by_criteria$co)
-
-co_map <- tm_shape(us_states) +
-  tm_polygons(col = "gray95", lwd = 0.5) +
-  tm_shape(co_buffer_u) +
-  tm_polygons(col = "#7fd3cd", lwd = 0, alpha = 0.5) +
-  tm_shape(co_buffer_l) +
-  tm_polygons(lwd = 0, alpha = 0.5, col = "#00a99d") +
-  tm_shape(co_buffer_u_extra) +
-  tm_polygons(lwd = 1.5, col = "#7fd3cd", border.col = "#7fd3cd") +
-  tm_shape(co_buffer_l_extra) +
-  tm_polygons(lwd = 1.5, col = "#00a99d", border.col = "#00a99d")
-
-
-pm_buffer_l <- rbind(regional_buffer_lower_by_criteria$pm,
-                     urban_buffer_lower_by_criteria$pm,
-                     neighborhood_buffer_lower_by_criteria$pm,
-                     middle_buffer_lower_by_criteria$pm,
-                     micro_buffer_lower_by_criteria$pm)
-pm_buffer_u <- rbind(regional_buffer_upper_by_criteria$pm,
-                     urban_buffer_upper_by_criteria$pm,
-                     neighborhood_buffer_upper_by_criteria$pm,
-                     middle_buffer_upper_by_criteria$pm,
-                     micro_buffer_upper_by_criteria$pm)
-pm_buffer_u_extra <- rbind(neighborhood_buffer_upper_by_criteria$pm,
-                           middle_buffer_upper_by_criteria$pm,
-                           micro_buffer_upper_by_criteria$pm)
-pm_buffer_l_extra <- rbind(neighborhood_buffer_lower_by_criteria$pm,
-                           middle_buffer_lower_by_criteria$pm,
-                           micro_buffer_lower_by_criteria$pm)
-pm_map <- tm_shape(us_states) +
-  tm_polygons(col = "gray95", lwd = 0.5) +
-  tm_shape(pm_buffer_u) +
-  tm_polygons(col = "#90d9b8", lwd = 0, alpha = 0.4) +
-  tm_shape(pm_buffer_l) +
-  tm_polygons(lwd = 0, alpha = 0.4, col = "#22b573") +
-  tm_shape(pm_buffer_u_extra) +
-  tm_polygons(lwd = 1.5, col = "#90d9b8", border.col = "#90d9b8") +
-  tm_shape(pm_buffer_l_extra) +
-  tm_polygons(lwd = 1.5, col = "#22b573", border.col = "#22b573")
-
-
-pb_buffer_u <- rbind(regional_buffer_upper_by_criteria$pb,
-                     urban_buffer_upper_by_criteria$pb,
-                     neighborhood_buffer_upper_by_criteria$pb,
-                     middle_buffer_upper_by_criteria$pb,
-                     micro_buffer_upper_by_criteria$pb)
-pb_buffer_l <- rbind(regional_buffer_lower_by_criteria$pb,
-                     urban_buffer_lower_by_criteria$pb,
-                     neighborhood_buffer_lower_by_criteria$pb,
-                     middle_buffer_lower_by_criteria$pb,
-                     micro_buffer_lower_by_criteria$pb)
-pb_buffer_u_extra <- rbind(neighborhood_buffer_upper_by_criteria$pb,
-                            middle_buffer_upper_by_criteria$pb,
-                            micro_buffer_upper_by_criteria$pb)
-pb_buffer_l_extra <- rbind(neighborhood_buffer_lower_by_criteria$pb,
-                            middle_buffer_lower_by_criteria$pb,
-                            micro_buffer_lower_by_criteria$pb)
-
-pb_buffer_u_ca <- pb_buffer_u[which(pb_buffer_u$State.Code == "06"), ]
-pb_buffer_l_ca <- pb_buffer_l[which(pb_buffer_l$State.Code == "06"), ]
-
-table(pb_buffer_u$Measurement.Scale)
-
-# note, there are no regional-scale pb monitors
-pb_map <- tm_shape(us_states) +
-  tm_polygons(col = "gray95", alpha = 0.10, lwd = 0.5) + 
-  tm_shape(pb_buffer_u) +
-  tm_polygons(col = "#df9295", lwd = 0, alpha = 0.95) +
-  tm_shape(pb_buffer_l) +
-  tm_polygons(lwd = 0, alpha = 0.95, col = "#c1272d") +
-  tm_shape(pb_buffer_u_extra) +
-  tm_polygons(lwd = 1.5, col = "#df9295", border.col = "#df9295") +
-  tm_shape(pb_buffer_l_extra) +
-  tm_polygons(lwd = 1.5, col = "#c1272d", border.col = "#c1272d")
-
-
-tmap_arrange(pm_map, o3_map, no2_map, 
-             so2_map, co_map, pb_map, 
-             ncol = 2, nrow = 3)
-
-```
 
 
 
