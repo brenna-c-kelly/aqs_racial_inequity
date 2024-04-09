@@ -30,12 +30,13 @@ library(regclass)
 
 ```{r}
 
-acs <- acs_merge
+# acs <- acs_merge
 
-# acs <- read.csv("data/7020_data.csv")
+acs <- read.csv("data/7020_data_count.csv")
 
-# acs$geoid <- str_pad(acs$geoid, width = 12, pad = "0", side = "left")
+acs$geoid <- str_pad(acs$geoid, width = 12, pad = "0", side = "left")
 
+head(acs)
 # acs_geom <- st_read("data/7020_geom.shp")
 # 
 # # merge by geoid
@@ -53,14 +54,14 @@ acs$pov_p <- ifelse(is.na(acs$pov_p), 0 , acs$pov_p)
 
 # scale 0-100
 acs <- acs |>
-  mutate(hisp_perc = hisp_p*100) |>
-  mutate(black_perc = black_p*100) |>
-  mutate(aian_perc = aian_p*100) |>
-  mutate(asian_perc = asian_p*100) |>
-  mutate(nhpi_perc = nhpi_p*100) |>
-  mutate(other_perc = other_p*100) |>
-  mutate(tom_perc = tom_p*100) |>
-  mutate(pov_perc = pov_p*100)
+  mutate(hisp_perc = ifelse(is.na(hisp_p), 0, hisp_p*100)) |>
+  mutate(black_perc = ifelse(is.na(black_p), 0, black_p*100)) |>
+  mutate(aian_perc = ifelse(is.na(aian_p), 0, aian_p*100)) |>
+  mutate(asian_perc = ifelse(is.na(asian_p), 0, asian_p*100)) |>
+  mutate(nhpi_perc = ifelse(is.na(nhpi_p), 0, nhpi_p*100)) |>
+  mutate(other_perc = ifelse(is.na(other_p), 0, other_p*100)) |>
+  mutate(tom_perc = ifelse(is.na(tom_p), 0, tom_p*100)) |>
+  mutate(pov_perc = ifelse(is.na(pov_p), 0, pov_p*100))
 acs <- acs |>
   mutate(hisp_p_log = log(hisp_perc + min(acs$hisp_perc[which(acs$hisp_perc > 0)]))) |>
   mutate(black_p_log = log(black_perc + min(acs$black_perc[which(acs$black_perc > 0)]))) |>
@@ -70,26 +71,88 @@ acs <- acs |>
   mutate(other_p_log = log(other_perc + min(acs$other_perc[which(acs$other_perc > 0)]))) |>
   mutate(tom_p_log = log(tom_perc + min(acs$tom_perc[which(acs$tom_perc > 0)]))) |>
   mutate(pov_p_log = log(pov_perc + min(acs$pov_perc[which(acs$pov_perc > 0)]))) |>
-  mutate(total_1k = total / 1000)
+  mutate(total_1k = total / 1000) |>
+  mutate(total_1k_log = log(total_1k + min(acs$total_1k[which(acs$total_1k > 0)])))
 
 acs$state <- str_sub(acs$geoid, start = 0, end = 2)
 
 acs$total_centered <- acs$total_1k - mean(acs$total_1k)
-acs$total_1k_log <- log(acs$total_1k)
-
+# acs$total_1k_log <- log(acs$total_1k)
+skewness(acs$total_1k)
 # write.csv(acs, "acs_inla.csv", row.names = FALSE)
 
 ```
 
 
 ```{r}
-summary(inla(n_upper_no2 ~ total_1k_log,# + 
+
+#sources <- read.csv("/Users/brenna/Downloads/Air Quality System (AIRS AQS).csv")
+
+# icis_minor <- read.csv("/Users/brenna/Downloads/Integrated Compliance Information System-Air (ICIS-Air).csv")
+icis <- read.csv("/Users/brenna/Downloads/ICIS-AIR_downloads/ICIS-AIR_FACILITIES.csv")
+
+addresses <- icis[, c("REGISTRY_ID", "STREET_ADDRESS", "CITY", "STATE", "ZIP_CODE")]
+addresses$file <- rep(c(1:(28*2)), length = nrow(addresses))
+table(addresses$file)
+addr_files <- split(addresses, addresses$file)
+
+for(i in 1:length(addr_files)) {
+  name <- paste0("address_file_", i, ".csv")
+  write.table(addr_files[i], file = name, col.names = FALSE, row.names = FALSE, sep = ",")
+}
+
+write.csv()
+
+fac <- read.csv("/Users/brenna/Downloads/national_combined/NATIONAL_FACILITY_FILE.CSV")
+facilities <- fac[, c("REGISTRY_ID", "CENSUS_BLOCK_CODE", "LATITUDE83", "LONGITUDE83")]
+head(fac)
+table(is.na(facilities$CENSUS_BLOCK_CODE))
+
+
+test <- merge(facilities, icis, by = "REGISTRY_ID")
+test <- test |>
+  filter(!is.na(LATITUDE83) & !is.na(LONGITUDE83) & !is.na(CENSUS_BLOCK_CODE))
+
+test$CENSUS_BLOCK_CODE <- str_pad(test$CENSUS_BLOCK_CODE, width = 15, side = "left", pad = "0")
+test$census_block_group <- str_sub(test$CENSUS_BLOCK_CODE, start = 1, end = 12)
+
+n_sources <- test |>
+  count(census_block_group)
+
+# merge with acs
+test_acs <- merge(acs, n_sources, by.x = "geoid", by.y = "census_block_group", all.x = TRUE)
+prop.table(table(test_acs$n == 0))
+test_acs$n <- ifelse(is.na(test_acs$n), 0, test_acs$n)
+test_acs$n_test <- test_acs$n + 1
+test_acs$n_test_log <- log(test_acs$n + 1)
+
+test_acs$n_test <- ifelse(test_acs$n > 500, 1, test_acs$n)
+
+skewness(test_acs$n / (test_acs$total_1k + 1))
+
+
+```
+
+
+
+```{r}
+summary(test_acs)
+test <- inla(n_lower_o3 ~ offset(total_1k),# + 
              #f(idarea, model = "besag", graph = g_id, scale.model = TRUE) +
              #f(idarea_2, model = "iid"), 
-             data = acs, family = "poisson",
+             data = test_acs, family = "poisson",
              control.inla= list(int.strategy = "eb"),
              control.compute = list(dic = TRUE, waic = TRUE),
-             control.predictor = list(compute = TRUE)))
+             control.predictor = list(compute = TRUE))
+
+summary(test)
+1.77e+218
+round(exp(test$summary.fixed), 2)
+
+1 - exp(-27/1621*10)
+
+
+
 ```
 
 

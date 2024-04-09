@@ -1,0 +1,384 @@
+---
+title: "Untitled"
+author: "Brenna Kelly"
+date: "2024-04-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(sp)
+library(sf)
+#library(tmap)
+library(INLA)
+library(spdep)
+library(dplyr)
+#library(moments)
+library(ggplot2)
+```
+
+
+
+```{r}
+
+res_lower <- inla_results_pois$inla_o3_l$summary.fixed
+res_upper <- inla_results_pois$inla_o3_u$summary.fixed
+res_lower$label <- "lower"
+res_upper$label <- "upper"
+
+res <- rbind(res_lower, res_upper)
+# res <- o3_res #summary(fit_intx)$coefs.SE.CI
+
+res <- tibble::rownames_to_column(res, "variable")
+
+res$variable <- ifelse(res$variable == "total_1k", "pop", res$variable)
+res$variable <- ifelse(res$variable == "total_1k1", "pop1", res$variable)
+res$label <- case_when(grepl("hisp", res$variable) == TRUE ~ "Hispanic or Latinx",
+                       grepl("black", res$variable) == TRUE ~ "Black or African American",
+                       grepl("aian", res$variable) == TRUE ~ "American Indian or Alaska Native",
+                       grepl("asian", res$variable) == TRUE ~ "Asian",
+                       grepl("nhpi", res$variable) == TRUE ~ "Native Hawaiian or Other Pacific Islander",
+                       grepl("other", res$variable) == TRUE ~ "Some Other Race",
+                       grepl("tom", res$variable) == TRUE ~ "Two or More Races",
+                       grepl("pop", res$variable) == TRUE ~ "Population, 1K")
+res$label <- ifelse(grepl("1", res$variable) == TRUE, paste0(res$label, ", upper"),
+                    paste0(res$label, ", lower"))
+res$scale <- ifelse(grepl("1", res$variable) == TRUE, "upper",
+                    "lower")
+
+res$mean <- round(exp(res$mean), 3)
+res$`0.025quant` <- round(exp(res$`0.025quant`), 3)
+res$`0.975quant` <- round(exp(res$`0.975quant`), 3)
+
+res <- res[, c("variable", "mean", "0.025quant", "0.975quant", "scale", "label")]
+
+res$sig <- ifelse(res$`0.025quant` < 1 & res$`0.025quant` < 1, "neg", NA)
+res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
+
+# figure
+
+res |>
+  filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
+  ggplot(aes(y = label, color = scale, group = scale)) +
+  theme_classic() +
+  geom_point(aes(x = mean), size = 1) +
+  #scale_size_manual(values = c(1, 3)) +
+  scale_color_manual(values = c("#ff2908","#f78e75")) +
+  geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
+  labs(x = "Odds of having O3 monitor (log scale)") +
+  coord_cartesian(xlim = c(0.6, 1.1)) +
+  geom_vline(xintercept = 1, linetype = "solid") +
+  geom_vline(xintercept = c(0.6, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
+  scale_x_continuous(trans = 'log10') +
+  theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank()) + 
+  geom_text(aes(x = (`0.975quant`), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
+  geom_text(aes(x = 0.6, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+
+```
+
+
+```{r pm}
+res_lower <- inla_results_pois$inla_pm_l$summary.fixed
+res_upper <- inla_results_pois$inla_pm_u$summary.fixed
+res_lower$label <- "lower"
+res_upper$label <- "upper"
+
+res <- rbind(res_lower, res_upper)
+# res <- o3_res #summary(fit_intx)$coefs.SE.CI
+
+res <- tibble::rownames_to_column(res, "variable")
+
+res$variable <- ifelse(res$variable == "total_1k", "pop", res$variable)
+res$variable <- ifelse(res$variable == "total_1k1", "pop1", res$variable)
+res$label <- case_when(grepl("hisp", res$variable) == TRUE ~ "Hispanic or Latinx",
+                       grepl("black", res$variable) == TRUE ~ "Black or African American",
+                       grepl("aian", res$variable) == TRUE ~ "American Indian or Alaska Native",
+                       grepl("asian", res$variable) == TRUE ~ "Asian",
+                       grepl("nhpi", res$variable) == TRUE ~ "Native Hawaiian or Other Pacific Islander",
+                       grepl("other", res$variable) == TRUE ~ "Some Other Race",
+                       grepl("tom", res$variable) == TRUE ~ "Two or More Races",
+                       grepl("pop", res$variable) == TRUE ~ "Population, 1K")
+res$label <- ifelse(grepl("1", res$variable) == TRUE, paste0(res$label, ", upper"),
+                    paste0(res$label, ", lower"))
+res$scale <- ifelse(grepl("1", res$variable) == TRUE, "upper",
+                    "lower")
+
+
+res$mean <- round(exp(res$mean), 3)
+res$`0.025quant` <- round(exp(res$`0.025quant`), 3)
+res$`0.975quant` <- round(exp(res$`0.975quant`), 3)
+
+res <- res[, c("variable", "mean", "0.025quant", "0.975quant", "scale", "label")]
+
+res$sig <- ifelse(res$`0.025quant` < 1 & res$`0.025quant` < 1, "neg", NA)
+res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
+
+# figure
+
+res |>
+  filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
+  ggplot(aes(y = label, color = scale, group = scale)) +
+  theme_classic() +
+  geom_point(aes(x = mean), size = 1) +
+  #scale_size_manual(values = c(1, 3)) +
+  scale_color_manual(values = c("#22b573", "#90d9b8")) +
+  geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
+  labs(x = "Odds of having O3 monitor (log scale)") +
+  coord_cartesian(xlim = c(0.5, 1.1)) +
+  geom_vline(xintercept = 1, linetype = "solid") +
+  geom_vline(xintercept = c(0.5, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
+  scale_x_continuous(trans = 'log10') +
+  theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank()) + 
+  geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
+  geom_text(aes(x = 0.5, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+
+```
+
+```{r no2}
+res_lower <- inla_results_pois$inla_no2_l$summary.fixed
+res_upper <- inla_results_pois$inla_no2_u$summary.fixed
+res_lower$label <- "lower"
+res_upper$label <- "upper"
+
+res <- rbind(res_lower, res_upper)
+# res <- o3_res #summary(fit_intx)$coefs.SE.CI
+
+res <- tibble::rownames_to_column(res, "variable")
+
+res$variable <- ifelse(res$variable == "total_1k", "pop", res$variable)
+res$variable <- ifelse(res$variable == "total_1k1", "pop1", res$variable)
+res$label <- case_when(grepl("hisp", res$variable) == TRUE ~ "Hispanic or Latinx",
+                       grepl("black", res$variable) == TRUE ~ "Black or African American",
+                       grepl("aian", res$variable) == TRUE ~ "American Indian or Alaska Native",
+                       grepl("asian", res$variable) == TRUE ~ "Asian",
+                       grepl("nhpi", res$variable) == TRUE ~ "Native Hawaiian or Other Pacific Islander",
+                       grepl("other", res$variable) == TRUE ~ "Some Other Race",
+                       grepl("tom", res$variable) == TRUE ~ "Two or More Races",
+                       grepl("pop", res$variable) == TRUE ~ "Population, 1K")
+res$label <- ifelse(grepl("1", res$variable) == TRUE, paste0(res$label, ", upper"),
+                    paste0(res$label, ", lower"))
+res$scale <- ifelse(grepl("1", res$variable) == TRUE, "upper",
+                    "lower")
+
+res$mean <- round(exp(res$mean), 3)
+res$`0.025quant` <- round(exp(res$`0.025quant`), 3)
+res$`0.975quant` <- round(exp(res$`0.975quant`), 3)
+
+res <- res[, c("variable", "mean", "0.025quant", "0.975quant", "scale", "label")]
+
+res$sig <- ifelse(res$`0.025quant` < 1 & res$`0.025quant` < 1, "neg", NA)
+res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
+
+# figure
+
+res |>
+  filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
+  ggplot(aes(y = label, color = scale, group = scale)) +
+  theme_classic() +
+  geom_point(aes(x = mean), size = 1) +
+  #scale_size_manual(values = c(1, 3)) +
+  scale_color_manual(values = c("#9e005d", "#ce7fad")) +
+  geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
+  labs(x = "Odds of having O3 monitor (log scale)") +
+  coord_cartesian(xlim = c(0.7, 1.1)) +
+  geom_vline(xintercept = 1, linetype = "solid") +
+  geom_vline(xintercept = c(0.7, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
+  scale_x_continuous(trans = 'log10') +
+  theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank()) + 
+  geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
+  geom_text(aes(x = 0.8, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+
+
+```
+
+```{r so2}
+res_lower <- inla_results_pois$inla_so2_l$summary.fixed
+res_upper <- inla_results_pois$inla_so2_u$summary.fixed
+res_lower$label <- "lower"
+res_upper$label <- "upper"
+
+res <- rbind(res_lower, res_upper)
+# res <- o3_res #summary(fit_intx)$coefs.SE.CI
+
+res <- tibble::rownames_to_column(res, "variable")
+
+res$variable <- ifelse(res$variable == "total_1k", "pop", res$variable)
+res$variable <- ifelse(res$variable == "total_1k1", "pop1", res$variable)
+res$label <- case_when(grepl("hisp", res$variable) == TRUE ~ "Hispanic or Latinx",
+                       grepl("black", res$variable) == TRUE ~ "Black or African American",
+                       grepl("aian", res$variable) == TRUE ~ "American Indian or Alaska Native",
+                       grepl("asian", res$variable) == TRUE ~ "Asian",
+                       grepl("nhpi", res$variable) == TRUE ~ "Native Hawaiian or Other Pacific Islander",
+                       grepl("other", res$variable) == TRUE ~ "Some Other Race",
+                       grepl("tom", res$variable) == TRUE ~ "Two or More Races",
+                       grepl("pop", res$variable) == TRUE ~ "Population, 1K")
+res$label <- ifelse(grepl("1", res$variable) == TRUE, paste0(res$label, ", upper"),
+                    paste0(res$label, ", lower"))
+res$scale <- ifelse(grepl("1", res$variable) == TRUE, "upper",
+                    "lower")
+
+res$mean <- round(exp(res$mean), 3)
+res$`0.025quant` <- round(exp(res$`0.025quant`), 3)
+res$`0.975quant` <- round(exp(res$`0.975quant`), 3)
+
+res <- res[, c("variable", "mean", "0.025quant", "0.975quant", "scale", "label")]
+
+res$sig <- ifelse(res$`0.025quant` < 1 & res$`0.025quant` < 1, "neg", NA)
+res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
+
+# figure
+
+res |>
+  filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
+  ggplot(aes(y = label, color = scale, group = scale)) +
+  theme_classic() +
+  geom_point(aes(x = mean), size = 1) +
+  #scale_size_manual(values = c(1, 3)) +
+  scale_color_manual(values = c("#0071bc", "#7fb7dd")) +
+  geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
+  labs(x = "Odds of having O3 monitor (log scale)") +
+  coord_cartesian(xlim = c(0.5, 1.1)) +
+  geom_vline(xintercept = 1, linetype = "solid") +
+  geom_vline(xintercept = c(0.5, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
+  scale_x_continuous(trans = 'log10') +
+  theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank()) + 
+  geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
+  geom_text(aes(x = 0.5, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+
+
+```
+
+```{r pb}
+
+res_lower <- inla_results_pois$inla_pb_l$summary.fixed
+res_upper <- inla_results_pois$inla_pb_u$summary.fixed
+res_lower$label <- "lower"
+res_upper$label <- "upper"
+
+res <- rbind(res_lower, res_upper)
+# res <- o3_res #summary(fit_intx)$coefs.SE.CI
+
+res <- tibble::rownames_to_column(res, "variable")
+
+res$variable <- ifelse(res$variable == "total_1k", "pop", res$variable)
+res$variable <- ifelse(res$variable == "total_1k1", "pop1", res$variable)
+res$label <- case_when(grepl("hisp", res$variable) == TRUE ~ "Hispanic or Latinx",
+                       grepl("black", res$variable) == TRUE ~ "Black or African American",
+                       grepl("aian", res$variable) == TRUE ~ "American Indian or Alaska Native",
+                       grepl("asian", res$variable) == TRUE ~ "Asian",
+                       grepl("nhpi", res$variable) == TRUE ~ "Native Hawaiian or Other Pacific Islander",
+                       grepl("other", res$variable) == TRUE ~ "Some Other Race",
+                       grepl("tom", res$variable) == TRUE ~ "Two or More Races",
+                       grepl("pop", res$variable) == TRUE ~ "Population, 1K")
+res$label <- ifelse(grepl("1", res$variable) == TRUE, paste0(res$label, ", upper"),
+                    paste0(res$label, ", lower"))
+res$scale <- ifelse(grepl("1", res$variable) == TRUE, "upper",
+                    "lower")
+
+res$mean <- round(exp(res$mean), 3)
+res$`0.025quant` <- round(exp(res$`0.025quant`), 3)
+res$`0.975quant` <- round(exp(res$`0.975quant`), 3)
+
+res <- res[, c("variable", "mean", "0.025quant", "0.975quant", "scale", "label")]
+
+res$sig <- ifelse(res$`0.025quant` < 1 & res$`0.025quant` < 1, "neg", NA)
+res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
+
+# figure
+
+res |>
+  filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
+  ggplot(aes(y = label, color = scale, group = scale)) +
+  theme_classic() +
+  geom_point(aes(x = mean), size = 1) +
+  #scale_size_manual(values = c(1, 3)) +
+  scale_color_manual(values = c("#c1272d", "#df9295")) +
+  geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
+  labs(x = "Odds of having O3 monitor (log scale)") +
+  coord_cartesian(xlim = c(0.4, 1.7)) +
+  geom_vline(xintercept = 1, linetype = "solid") +
+  geom_vline(xintercept = c(0.6, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
+  scale_x_continuous(trans = 'log10') +
+  theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank()) + 
+  geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
+  geom_text(aes(x = 0.4, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+
+
+```
+
+```{r co}
+res_lower <- inla_results_pois$inla_co_l$summary.fixed
+res_upper <- inla_results_pois$inla_co_u$summary.fixed
+res_lower$label <- "lower"
+res_upper$label <- "upper"
+
+res <- rbind(res_lower, res_upper)
+# res <- o3_res #summary(fit_intx)$coefs.SE.CI
+
+res <- tibble::rownames_to_column(res, "variable")
+
+res$variable <- ifelse(res$variable == "total_1k", "pop", res$variable)
+res$variable <- ifelse(res$variable == "total_1k1", "pop1", res$variable)
+res$label <- case_when(grepl("hisp", res$variable) == TRUE ~ "Hispanic or Latinx",
+                       grepl("black", res$variable) == TRUE ~ "Black or African American",
+                       grepl("aian", res$variable) == TRUE ~ "American Indian or Alaska Native",
+                       grepl("asian", res$variable) == TRUE ~ "Asian",
+                       grepl("nhpi", res$variable) == TRUE ~ "Native Hawaiian or Other Pacific Islander",
+                       grepl("other", res$variable) == TRUE ~ "Some Other Race",
+                       grepl("tom", res$variable) == TRUE ~ "Two or More Races",
+                       grepl("pop", res$variable) == TRUE ~ "Population, 1K")
+res$label <- ifelse(grepl("1", res$variable) == TRUE, paste0(res$label, ", upper"),
+                    paste0(res$label, ", lower"))
+res$scale <- ifelse(grepl("1", res$variable) == TRUE, "upper",
+                    "lower")
+
+res$mean <- round(exp(res$mean), 3)
+res$`0.025quant` <- round(exp(res$`0.025quant`), 3)
+res$`0.975quant` <- round(exp(res$`0.975quant`), 3)
+
+res <- res[, c("variable", "mean", "0.025quant", "0.975quant", "scale", "label")]
+
+res$sig <- ifelse(res$`0.025quant` < 1 & res$`0.025quant` < 1, "neg", NA)
+res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
+
+# figure
+
+res |>
+  filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
+  ggplot(aes(y = label, color = scale, group = scale)) +
+  theme_classic() +
+  geom_point(aes(x = mean), size = 1) +
+  #scale_size_manual(values = c(1, 3)) +
+  scale_color_manual(values = c("#00a99d", "#7fd3cd")) +
+  geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
+  labs(x = "Odds of having O3 monitor (log scale)") +
+  coord_cartesian(xlim = c(0.6, 1.3)) +
+  geom_vline(xintercept = 1, linetype = "solid") +
+  geom_vline(xintercept = c(0.5, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
+  scale_x_continuous(trans = 'log10') +
+  theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank()) + 
+  geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
+  geom_text(aes(x = 0.6, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+
+```
