@@ -117,8 +117,13 @@ mons <- st_transform(mons, st_crs(aea))
 tm_shape(mons) +
   tm_dots(col = "criteria")
 
-table(mons$Measurement.Scale.Definition,
+table(mons$Monitoring.Objective,
       mons$Measurement.Scale)
+
+st_write(mons, "data/mons_clean.shp", append = FALSE)
+
+table(mons$criteria)
+100 * table(mons$criteria, mons$Measurement.Scale) / 1074
 
 # measurement scale is missing and not attainable for 1241 (16%) of observations
 #   we'll impute with the median (neighborhood scale, 500M-4KM)
@@ -150,12 +155,14 @@ spatial
 acs_vars <- load_variables(2021, "acs5", cache = TRUE)
 
 
-ST <- c("AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", 
-        "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY",
-        "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", 
-        "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", 
-        "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", 
-        "VT", "VA", "WA", "WV", "WI", "WY") # for now, exclude U.S. territories
+ST <- c("PR")#"AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", 
+        # "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY",
+        # "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", 
+        # "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", 
+        # "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", 
+        # "VT", "VA", "WA", "WV", "WI", "WY") # for now, exclude U.S. territories
+
+# us_states <- get_acs(geography = "block group")
 
 acs_dat <- list()
 
@@ -219,7 +226,8 @@ acs_data <- acs_data |>
 
 names(acs_data) <- tolower(names(acs_data))
   
-write.csv(acs_data, "data/acs_data.csv", row.names = FALSE)
+write.csv(acs_data, "data/acs_data_pr.csv", row.names = FALSE)
+# write.csv(acs_data, "data/acs_data.csv", row.names = FALSE)
 
 
 ```
@@ -230,6 +238,10 @@ We don't just want block groups; we want to know where the population is in that
 ```{r}
 
 centroids <- read.csv("/Users/brenna/Documents/School/Research/aqs-inequities/aqs_inequities/CenPop2020_Mean_BG.csv")
+#PR
+centroids <- centroids |>
+  filter(STATEFP == 72)
+
 names(centroids) <- tolower(names(centroids))
 centroids <- st_as_sf(centroids, coords = c("longitude", "latitude"), 
                  crs = 4326, agr = "constant")## |>
@@ -642,16 +654,100 @@ let's make sure that worked properly
 ```{r}
 
 # plotting the buffers
-tm_shape(regional_buffer_upper_by_criteria$o3) +
-  tm_polygons(, col = "criteria", alpha = 0.3, lwd = 0) +
+us_states <- get_acs(geography = "state",
+                     variables = c("B03002_001"),
+                     geometry = TRUE,
+                     year = 2021)
+us_states <- st_transform(us_states, aea)
+
+## O3
+o3_map <- tm_shape(us_states, proj = aea) +
+  tm_polygons(col = "white", lwd = 0.5, border.col = "black") +
+  tm_shape(regional_buffer_upper_by_criteria$o3) +
+  tm_polygons(col = "#ff2908", alpha = 0.25, lwd = 0) +
   tm_shape(micro_buffer_upper_by_criteria$o3) +
-  tm_polygons(col = "criteria") +
+  tm_polygons(col = "#ff2908", alpha = 0.25, lwd = 1) +
   tm_shape(middle_buffer_upper_by_criteria$o3) +
-  tm_polygons(, col = "criteria", alpha = 0.3, lwd = 0) +
+  tm_polygons(col = "#ff2908", alpha = 0.25, lwd = 1) +
   tm_shape(neighborhood_buffer_upper_by_criteria$o3) +
-  tm_polygons(, col = "criteria", alpha = 0.3, lwd = 0) +
+  tm_polygons(col = "#ff2908", alpha = 0.25, lwd = 1) +
   tm_shape(urban_buffer_upper_by_criteria$o3) +
-  tm_polygons(, col = "criteria", alpha = 0.3, lwd = 0)
+  tm_polygons(col = "#ff2908", alpha = 0.25, lwd = 0)
+
+## PM
+pm_map <- tm_shape(us_states, proj = aea) +
+  tm_polygons(col = "white", lwd = 0.5, border.col = "black") +
+  tm_shape(regional_buffer_upper_by_criteria$pm) +
+  tm_polygons(col = "#436042", alpha = 0.25, lwd = 0) +
+  tm_shape(micro_buffer_upper_by_criteria$pm) +
+  tm_polygons(col = "#436042", alpha = 0.25, lwd = 1) +
+  tm_shape(middle_buffer_upper_by_criteria$pm) +
+  tm_polygons(col = "#436042", alpha = 0.25, lwd = 1) +
+  tm_shape(neighborhood_buffer_upper_by_criteria$pm) +
+  tm_polygons(col = "#436042", alpha = 0.25, lwd = 1) +
+  tm_shape(urban_buffer_upper_by_criteria$pm) +
+  tm_polygons(col = "#436042", alpha = 0.25, lwd = 0)
+
+## NO2
+no2_map <- tm_shape(us_states, proj = aea) +
+  tm_polygons(col = "white", lwd = 0.5, border.col = "black") +
+  tm_shape(regional_buffer_upper_by_criteria$no2) +
+  tm_polygons(col = "#ebb140", alpha = 0.35, lwd = 0) +
+  tm_shape(micro_buffer_upper_by_criteria$no2) +
+  tm_polygons(col = "#ebb140", alpha = 0.35, lwd = 1) +
+  tm_shape(middle_buffer_upper_by_criteria$no2) +
+  tm_polygons(col = "#ebb140", alpha = 0.35, lwd = 1) +
+  tm_shape(neighborhood_buffer_upper_by_criteria$no2) +
+  tm_polygons(col = "#ebb140", alpha = 0.35, lwd = 1) +
+  tm_shape(urban_buffer_upper_by_criteria$no2) +
+  tm_polygons(col = "#ebb140", alpha = 0.35, lwd = 0)
+
+## SO2
+so2_map <- tm_shape(us_states, proj = aea) +
+  tm_polygons(col = "white", lwd = 0.5, border.col = "black") +
+  tm_shape(regional_buffer_upper_by_criteria$so2) +
+  tm_polygons(col = "#4f5dbc", alpha = 0.25, lwd = 0) +
+  tm_shape(micro_buffer_upper_by_criteria$so2) +
+  tm_polygons(col = "#4f5dbc", alpha = 0.25, lwd = 1) +
+  tm_shape(middle_buffer_upper_by_criteria$so2) +
+  tm_polygons(col = "#4f5dbc", alpha = 0.25, lwd = 1) +
+  tm_shape(neighborhood_buffer_upper_by_criteria$so2) +
+  tm_polygons(col = "#4f5dbc", alpha = 0.25, lwd = 1) +
+  tm_shape(urban_buffer_upper_by_criteria$so2) +
+  tm_polygons(col = "#4f5dbc", alpha = 0.25, lwd = 0)
+
+## Pb
+pb_map <- tm_shape(us_states, proj = aea) +
+  tm_polygons(col = "white", lwd = 0.5, border.col = "black") +
+  #tm_shape(regional_buffer_upper_by_criteria$pb) +
+  #tm_polygons(col = "#c58058", alpha = 0.25, lwd = 0) +
+  tm_shape(micro_buffer_upper_by_criteria$pb) +
+  tm_polygons(col = "#c58058", alpha = 0.35, lwd = 1) +
+  tm_shape(middle_buffer_upper_by_criteria$pb) +
+  tm_polygons(col = "#c58058", alpha = 0.35, lwd = 1) +
+  tm_shape(neighborhood_buffer_upper_by_criteria$pb) +
+  tm_polygons(col = "#c58058", alpha = 0.35, lwd = 1) +
+  tm_shape(urban_buffer_upper_by_criteria$pb) +
+  tm_polygons(col = "#c58058", alpha = 0.35, lwd = 1)
+
+## CO
+co_map <- tm_shape(us_states, proj = aea) +
+  tm_polygons(col = "white", lwd = 0.5, border.col = "black") +
+  tm_shape(regional_buffer_upper_by_criteria$co) +
+  tm_polygons(col = "#00a99d", alpha = 0.35, lwd = 0) +
+  tm_shape(micro_buffer_upper_by_criteria$co) +
+  tm_polygons(col = "#00a99d", alpha = 0.35, lwd = 1) +
+  tm_shape(middle_buffer_upper_by_criteria$co) +
+  tm_polygons(col = "#00a99d", alpha = 0.35, lwd = 1) +
+  tm_shape(neighborhood_buffer_upper_by_criteria$co) +
+  tm_polygons(col = "#00a99d", alpha = 0.35, lwd = 1) +
+  tm_shape(urban_buffer_upper_by_criteria$co) +
+  tm_polygons(col = "#00a99d", alpha = 0.35, lwd = 0)
+
+# current.mode <- tmap_mode("plot")
+tmap_arrange(o3_map, pm_map, so2_map, 
+             no2_map, pb_map, co_map,
+             nrow = 2, ncol = 3)
 
 # plotting the centroids that lie within the buffers
 tm_shape(measured_bgc_regional_o3_lower) +
@@ -795,9 +891,9 @@ acs_merge <- acs_data |>
   merge(count_so2, by = "geoid", all.x = TRUE) |>
   merge(count_co, by = "geoid", all.x = TRUE) |>
   merge(count_o3, by = "geoid", all.x = TRUE) |>
-  merge(count_pb, by = "geoid", all.x = TRUE) |>
-  mutate(n_lower_pb = ifelse(is.na(n_lower_pb), 0, n_lower_pb)) |>
-  mutate(n_upper_pb = ifelse(is.na(n_upper_pb), 0, n_upper_pb)) |>
+  # merge(count_pb, by = "geoid", all.x = TRUE) |>
+  mutate(n_upper_pb = 0)|>#ifelse(is.na(n_upper_pb), 0, n_upper_pb)) |> # 0)|>
+  mutate(n_lower_pb = 0)|>#ifelse(is.na(n_lower_pb), 0, n_lower_pb)) |> # 0)|>
   mutate(n_lower_no2 = ifelse(is.na(n_lower_no2), 0, n_lower_no2)) |>
   mutate(n_upper_no2 = ifelse(is.na(n_upper_no2), 0, n_upper_no2)) |>
   mutate(n_lower_so2 = ifelse(is.na(n_lower_so2), 0, n_lower_so2)) |>
@@ -820,13 +916,13 @@ Variables created and stored here need to be unique in the `acs_dat` dataframe.
 
 names(acs_dat) <- tolower(names(acs_dat))
 
-measured_pb_lower$pb_scale_l <- paste0(measured_pb_lower$criteria, 
+measured_pb_lower$pb_scale_l <- paste0(measured_pb_lower$criteria,
                                        ", ", measured_pb_lower$Measurement.Scale,
                                        ", ", "lower")
 measured_pb_lower <- measured_pb_lower[, c("geoid", "pb_scale_l")] |>
   st_drop_geometry()
 
-measured_pb_upper$pb_scale_u <- paste0(measured_pb_upper$criteria, 
+measured_pb_upper$pb_scale_u <- paste0(measured_pb_upper$criteria,
                                        ", ", measured_pb_upper$Measurement.Scale,
                                        ", ", "upper")
 measured_pb_upper <- measured_pb_upper[, c("geoid", "pb_scale_u")] |>
@@ -927,10 +1023,12 @@ summary(acs_merge)
 ```{r}
 
 acs_wo_geom <- st_drop_geometry(acs_merge)
-# acs_geom <- acs_merge |>
-#   select(geoid, geometry)
+acs_geom <- acs_merge |>
+  select(geoid, geometry)
 
-write.csv(acs_wo_geom, "data/7020_data_count.csv", row.names = FALSE)
+write.csv(acs_wo_geom, "data/7020_data_count_PR.csv", row.names = FALSE)
+# write.csv(acs_wo_geom, "data/7020_data_count.csv", row.names = FALSE)
+st_write(acs_geom, "data/7020_geom_PR.shp", append = TRUE)
 # st_write(acs_geom, "data/7020_geom.shp", append = TRUE)
 
 ```

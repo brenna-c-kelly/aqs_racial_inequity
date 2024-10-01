@@ -10,22 +10,87 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
+
 library(sp)
 library(sf)
 #library(tmap)
 library(INLA)
 library(spdep)
 library(dplyr)
+library(ggpubr)
 #library(moments)
 library(ggplot2)
+
 ```
 
-
+Segregation model
 
 ```{r}
 
-res_lower <- inla_results_pois$inla_o3_l$summary.fixed
-res_upper <- inla_results_pois$inla_o3_u$summary.fixed
+# res_lower <- seg_inla_l$summary.fixed
+# res_upper <- seg_inla$summary.fixed
+# res_lower$label <- "lower"
+# res_upper$label <- "upper"
+# 
+# res <- rbind(res_lower, res_upper)
+# # res <- o3_res #summary(fit_intx)$coefs.SE.CI
+# 
+# res <- tibble::rownames_to_column(res, "variable") |>
+#   filter(grepl("H_c", variable) == FALSE) |>
+#   filter(grepl("M_", variable) == FALSE) |>
+# 
+# res$variable <- ifelse(res$variable == "total_1k", "pop", res$variable)
+# res$variable <- ifelse(res$variable == "total_1k1", "pop1", res$variable)
+# res$label <- case_when(grepl("hisp", res$variable) == TRUE ~ "Hispanic or Latinx",
+#                        grepl("black", res$variable) == TRUE ~ "Black or African American",
+#                        grepl("aian", res$variable) == TRUE ~ "American Indian or Alaska Native",
+#                        grepl("asian", res$variable) == TRUE ~ "Asian",
+#                        grepl("nhpi", res$variable) == TRUE ~ "Native Hawaiian or Other Pacific Islander",
+#                        grepl("other", res$variable) == TRUE ~ "Some Other Race",
+#                        grepl("tom", res$variable) == TRUE ~ "Two or More Races",
+#                        grepl("pop", res$variable) == TRUE ~ "Population, 1K")
+# res$label <- ifelse(grepl("1", res$variable) == TRUE, paste0(res$label, ", upper"),
+#                     paste0(res$label, ", lower"))
+# res$scale <- ifelse(grepl("1", res$variable) == TRUE, "upper",
+#                     "lower")
+# 
+# res$mean <- round(exp(res$mean), 3)
+# res$`0.025quant` <- round(exp(res$`0.025quant`), 3)
+# res$`0.975quant` <- round(exp(res$`0.975quant`), 3)
+# 
+# res <- res[, c("variable", "mean", "0.025quant", "0.975quant", "scale", "label")]
+# 
+# res$sig <- ifelse(res$`0.025quant` < 1 & res$`0.025quant` < 1, "neg", NA)
+# res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
+# 
+# # figure
+# 
+# res |>
+#   filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
+#   ggplot(aes(y = label, color = scale, group = scale)) +
+#   theme_classic() +
+#   geom_point(aes(x = mean)) +
+#   #scale_size_manual(values = c(1, 3)) +
+#   scale_color_manual(values = c("#ff2908","#f78e75")) +
+#   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
+#   labs(x = "Odds of having O3 monitor (log scale)") +
+#   coord_cartesian(xlim = c(0.5, 1.2)) +
+#   geom_vline(xintercept = 1, linetype = "solid") +
+#   geom_vline(xintercept = c(0.5, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
+#   scale_x_continuous(trans = 'log10') +
+#   theme(axis.line.y = element_blank(),
+#         axis.ticks.y = element_blank(),
+#         axis.text.y = element_blank(),
+#         axis.title.y = element_blank()) + 
+#   geom_text(aes(x = (`0.975quant` + 0.01), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
+#   geom_text(aes(x = 0.5, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+
+```
+
+```{r}
+
+res_lower <- mod_o3_l$inla_o3_l$summary.fixed#inla_results_pois$inla_o3_l$summary.fixed
+res_upper <- mod_o3_u$inla_o3_u$summary.fixed#inla_results_pois$inla_o3_u$summary.fixed
 res_lower$label <- "lower"
 res_upper$label <- "upper"
 
@@ -60,32 +125,33 @@ res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
 
 # figure
 
-res |>
+gg_o3 <- res |>
   filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
   ggplot(aes(y = label, color = scale, group = scale)) +
   theme_classic() +
-  geom_point(aes(x = mean), size = 1) +
+  geom_point(aes(x = mean)) +
   #scale_size_manual(values = c(1, 3)) +
   scale_color_manual(values = c("#ff2908","#f78e75")) +
   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
-  labs(x = "Odds of having O3 monitor (log scale)") +
-  coord_cartesian(xlim = c(0.6, 1.1)) +
+  labs(x = "Change in n O3 monitors (log scale)") +
+  coord_cartesian(xlim = c(0.5, 1.2)) +
   geom_vline(xintercept = 1, linetype = "solid") +
-  geom_vline(xintercept = c(0.6, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
+  geom_vline(xintercept = c(0.5, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
   scale_x_continuous(trans = 'log10') +
   theme(axis.line.y = element_blank(),
         axis.ticks.y = element_blank(),
         axis.text.y = element_blank(),
         axis.title.y = element_blank()) + 
-  geom_text(aes(x = (`0.975quant`), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
-  geom_text(aes(x = 0.6, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+  geom_text(aes(x = (`0.975quant` + 0.01), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
+  geom_text(aes(x = 0.5, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+gg_o3
 
 ```
 
 
 ```{r pm}
-res_lower <- inla_results_pois$inla_pm_l$summary.fixed
-res_upper <- inla_results_pois$inla_pm_u$summary.fixed
+res_lower <- mod_pm_l$inla_pm_l$summary.fixed#inla_results_pois$inla_pm_l$summary.fixed
+res_upper <- mod_pm_u$inla_pm_u$summary.fixed#inla_results_pois$inla_pm_u$summary.fixed
 res_lower$label <- "lower"
 res_upper$label <- "upper"
 
@@ -121,7 +187,7 @@ res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
 
 # figure
 
-res |>
+gg_pm <- res |>
   filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
   ggplot(aes(y = label, color = scale, group = scale)) +
   theme_classic() +
@@ -129,8 +195,8 @@ res |>
   #scale_size_manual(values = c(1, 3)) +
   scale_color_manual(values = c("#22b573", "#90d9b8")) +
   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
-  labs(x = "Odds of having O3 monitor (log scale)") +
-  coord_cartesian(xlim = c(0.5, 1.1)) +
+  labs(x = "Change in n PM monitors (log scale)") +
+  coord_cartesian(xlim = c(0.5, 1.15)) +
   geom_vline(xintercept = 1, linetype = "solid") +
   geom_vline(xintercept = c(0.5, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
   scale_x_continuous(trans = 'log10') +
@@ -140,12 +206,78 @@ res |>
         axis.title.y = element_blank()) + 
   geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
   geom_text(aes(x = 0.5, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+gg_pm
 
 ```
 
+
+```{r}
+# 
+# res_lower <- pm_spatial_res_lo$summary.fixed
+# res_upper <- pm_spatial_res$summary.fixed
+# res_lower$label <- "lower"
+# res_upper$label <- "upper"
+# 
+# res <- rbind(res_lower, res_upper)
+# # res <- o3_res #summary(fit_intx)$coefs.SE.CI
+# 
+# res <- tibble::rownames_to_column(res, "variable")
+# 
+# res$variable <- ifelse(res$variable == "total_1k", "pop", res$variable)
+# res$variable <- ifelse(res$variable == "total_1k1", "pop1", res$variable)
+# res$label <- case_when(grepl("hisp", res$variable) == TRUE ~ "Hispanic or Latinx",
+#                        grepl("black", res$variable) == TRUE ~ "Black or African American",
+#                        grepl("aian", res$variable) == TRUE ~ "American Indian or Alaska Native",
+#                        grepl("asian", res$variable) == TRUE ~ "Asian",
+#                        grepl("nhpi", res$variable) == TRUE ~ "Native Hawaiian or Other Pacific Islander",
+#                        grepl("other", res$variable) == TRUE ~ "Some Other Race",
+#                        grepl("tom", res$variable) == TRUE ~ "Two or More Races",
+#                        grepl("pop", res$variable) == TRUE ~ "Population, 1K")
+# res$label <- ifelse(grepl("1", res$variable) == TRUE, paste0(res$label, ", upper"),
+#                     paste0(res$label, ", lower"))
+# res$scale <- ifelse(grepl("1", res$variable) == TRUE, "upper",
+#                     "lower")
+# 
+# 
+# res$mean <- round(exp(res$mean), 3)
+# res$`0.025quant` <- round(exp(res$`0.025quant`), 3)
+# res$`0.975quant` <- round(exp(res$`0.975quant`), 3)
+# 
+# res <- res[, c("variable", "mean", "0.025quant", "0.975quant", "scale", "label")]
+# 
+# res$sig <- ifelse(res$`0.025quant` < 1 & res$`0.025quant` < 1, "neg", NA)
+# res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
+# 
+# # figure
+# 
+# gg_pm <- res |>
+#   filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
+#   ggplot(aes(y = label, color = scale, group = scale)) +
+#   theme_classic() +
+#   geom_point(aes(x = mean), size = 1) +
+#   #scale_size_manual(values = c(1, 3)) +
+#   scale_color_manual(values = c("#22b573", "#90d9b8")) +
+#   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
+#   labs(x = "Change in n PM monitors (log scale)") +
+#   coord_cartesian(xlim = c(0.5, 1.15)) +
+#   geom_vline(xintercept = 1, linetype = "solid") +
+#   geom_vline(xintercept = c(0.5, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
+#   scale_x_continuous(trans = 'log10') +
+#   theme(axis.line.y = element_blank(),
+#         axis.ticks.y = element_blank(),
+#         axis.text.y = element_blank(),
+#         axis.title.y = element_blank()) + 
+#   geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
+#   geom_text(aes(x = 0.5, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+# gg_pm
+
+```
+
+
+
 ```{r no2}
-res_lower <- inla_results_pois$inla_no2_l$summary.fixed
-res_upper <- inla_results_pois$inla_no2_u$summary.fixed
+res_lower <- mod_no2_l$inla_no2_l$summary.fixed#inla_results_pois$inla_no2_l$summary.fixed
+res_upper <- mod_no2_u$inla_no2_u$summary.fixed#inla_results_pois$inla_no2_u$summary.fixed
 res_lower$label <- "lower"
 res_upper$label <- "upper"
 
@@ -180,7 +312,7 @@ res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
 
 # figure
 
-res |>
+gg_no2 <- res |>
   filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
   ggplot(aes(y = label, color = scale, group = scale)) +
   theme_classic() +
@@ -188,24 +320,24 @@ res |>
   #scale_size_manual(values = c(1, 3)) +
   scale_color_manual(values = c("#9e005d", "#ce7fad")) +
   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
-  labs(x = "Odds of having O3 monitor (log scale)") +
-  coord_cartesian(xlim = c(0.7, 1.1)) +
+  labs(x = "Change in n NO2 monitors (log scale)") +
+  coord_cartesian(xlim = c(0.6, 1.4)) +
   geom_vline(xintercept = 1, linetype = "solid") +
-  geom_vline(xintercept = c(0.7, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
+  geom_vline(xintercept = c(0.6, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
   scale_x_continuous(trans = 'log10') +
   theme(axis.line.y = element_blank(),
         axis.ticks.y = element_blank(),
         axis.text.y = element_blank(),
         axis.title.y = element_blank()) + 
   geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
-  geom_text(aes(x = 0.8, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
-
+  geom_text(aes(x = 0.6, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+gg_no2
 
 ```
 
 ```{r so2}
-res_lower <- inla_results_pois$inla_so2_l$summary.fixed
-res_upper <- inla_results_pois$inla_so2_u$summary.fixed
+res_lower <- mod_no2_l$inla_so2_l$summary.fixed#inla_results_pois$inla_so2_l$summary.fixed
+res_upper <- mod_no2_u$inla_so2_u$summary.fixed#inla_results_pois$inla_so2_u$summary.fixed
 res_lower$label <- "lower"
 res_upper$label <- "upper"
 
@@ -240,7 +372,7 @@ res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
 
 # figure
 
-res |>
+gg_so2 <- res |>
   filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
   ggplot(aes(y = label, color = scale, group = scale)) +
   theme_classic() +
@@ -248,8 +380,8 @@ res |>
   #scale_size_manual(values = c(1, 3)) +
   scale_color_manual(values = c("#0071bc", "#7fb7dd")) +
   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
-  labs(x = "Odds of having O3 monitor (log scale)") +
-  coord_cartesian(xlim = c(0.5, 1.1)) +
+  labs(x = "Change in n SO2 monitors (log scale)") +
+  coord_cartesian(xlim = c(0.4, 1.25)) +
   geom_vline(xintercept = 1, linetype = "solid") +
   geom_vline(xintercept = c(0.5, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
   scale_x_continuous(trans = 'log10') +
@@ -258,15 +390,15 @@ res |>
         axis.text.y = element_blank(),
         axis.title.y = element_blank()) + 
   geom_text(aes(x = (`0.975quant` + 0.02), y=label, label = round(mean, 2)), hjust = 0, fontface = "bold") +#, size = 4) +
-  geom_text(aes(x = 0.5, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
+  geom_text(aes(x = 0.4, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
 
 
 ```
 
 ```{r pb}
 
-res_lower <- inla_results_pois$inla_pb_l$summary.fixed
-res_upper <- inla_results_pois$inla_pb_u$summary.fixed
+res_lower <- mod_pb_l$inla_pb_l$summary.fixed#inla_results_pois$inla_pb_l$summary.fixed
+res_upper <- mod_pb_u$inla_pb_u$summary.fixed#inla_results_pois$inla_pb_u$summary.fixed
 res_lower$label <- "lower"
 res_upper$label <- "upper"
 
@@ -301,7 +433,7 @@ res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
 
 # figure
 
-res |>
+gg_pb <- res |>
   filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
   ggplot(aes(y = label, color = scale, group = scale)) +
   theme_classic() +
@@ -309,7 +441,7 @@ res |>
   #scale_size_manual(values = c(1, 3)) +
   scale_color_manual(values = c("#c1272d", "#df9295")) +
   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
-  labs(x = "Odds of having O3 monitor (log scale)") +
+  labs(x = "Change in n Pb monitors (log scale)") +
   coord_cartesian(xlim = c(0.4, 1.7)) +
   geom_vline(xintercept = 1, linetype = "solid") +
   geom_vline(xintercept = c(0.6, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
@@ -325,8 +457,8 @@ res |>
 ```
 
 ```{r co}
-res_lower <- inla_results_pois$inla_co_l$summary.fixed
-res_upper <- inla_results_pois$inla_co_u$summary.fixed
+res_lower <- mod_co_l$inla_co_l$summary.fixed#inla_results_pois$inla_co_l$summary.fixed
+res_upper <- mod_co_u$inla_co_u$summary.fixed#inla_results_pois$inla_co_u$summary.fixed
 res_lower$label <- "lower"
 res_upper$label <- "upper"
 
@@ -361,7 +493,7 @@ res$sig <- ifelse(res$`0.975quant` > 1 & res$`0.975quant` > 1, "pos", res$sig)
 
 # figure
 
-res |>
+gg_co <- res |>
   filter(!variable %in% c("(Intercept)", "(Intercept)1")) |>
   ggplot(aes(y = label, color = scale, group = scale)) +
   theme_classic() +
@@ -369,7 +501,7 @@ res |>
   #scale_size_manual(values = c(1, 3)) +
   scale_color_manual(values = c("#00a99d", "#7fd3cd")) +
   geom_linerange(aes(xmin = `0.025quant`, xmax = `0.975quant`)) +
-  labs(x = "Odds of having O3 monitor (log scale)") +
+  labs(x = "Change in n CO monitors (log scale)") +
   coord_cartesian(xlim = c(0.6, 1.3)) +
   geom_vline(xintercept = 1, linetype = "solid") +
   geom_vline(xintercept = c(0.5, 0.9, 1.1, 1.2), alpha = 0.5, linetype="dotted") +
@@ -382,3 +514,13 @@ res |>
   geom_text(aes(x = 0.6, y = label, label = stringr::str_wrap(label, 30), hjust=0), fontface = "plain", size = 4)
 
 ```
+
+
+```{r}
+
+ggarrange(gg_co, gg_no2, gg_o3,
+          gg_so2, gg_pb, gg_pm)
+
+```
+
+
